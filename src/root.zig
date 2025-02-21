@@ -91,6 +91,26 @@ const HTTP_1_1: u64 = @bitCast([8]u8{ 'H', 'T', 'T', 'P', '/', '1', '.', '1' });
 /// `GET / HTTP/1.1\n`
 const min_request_len = 0xf;
 
+const token_map = [256]u1{
+    // Initialize all to 0
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, // ! # $ % & ' * +
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, // 0-9
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // A-O
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, // P-Z, ^, _
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // a-o
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, // p-z, |, ~
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
 /// When `error.Incomplete` is received, caller should read more bytes to buffer
 /// and retry parsing with `parseRequest`.
 pub const ParseRequestError = error{ Incomplete, Invalid };
@@ -126,6 +146,7 @@ const Cursor = struct {
     }
 
     /// Checks if buffer has `len` length of characters.
+    /// `(cursor.end - cursor.idx >= len)`
     inline fn hasLength(cursor: *const Cursor, len: usize) bool {
         return cursor.end - cursor.idx >= len;
     }
@@ -392,23 +413,127 @@ const Cursor = struct {
         }
     }
 
+    /// Validate header values.
+    inline fn matchHeaderValue(cursor: *Cursor) void {
+        // Prefer vectorized searches for header values.
+        if (comptime use_vectors) {
+            while (cursor.hasLength(vec_size)) {
+                // Fill a vector with TAB (\t, 9).
+                const tabs: @Vector(vec_size, u8) = @splat(0x9);
+                // Fill a vector with DEL (127).
+                const deletes: @Vector(vec_size, u8) = @splat(0x7f);
+                // Fill a vector with US (31).
+                const full_31: @Vector(vec_size, u8) = @splat(0x1f);
+                // Load the next chunk from the buffer.
+                const chunk = cursor.asVector(vec_size);
+
+                const bits = @intFromBool(chunk > full_31) | @intFromBool(chunk == tabs) & ~@intFromBool(chunk == deletes);
+
+                const adv_by = @ctz(~@as(VectorInt, @bitCast(bits)));
+
+                // advance the cursor
+                cursor.advance(adv_by);
+
+                // FIXME: EVERYTHING INCOMPLETE
+
+                // chunk includes an invalid char or CRLF, we're done
+                if (adv_by != vec_size) {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Parses a single header.
+    inline fn parseHeader(cursor: *Cursor, header: *Header) ParseRequestError!void {
+        // Initially, we should be at where header starts.
+        const key_start = cursor.current();
+        // We can prefer vectored search here, though header keys are generally short so it might be an overkill.
+        swar.matchHeaderKey(cursor);
+        const key_end = cursor.current();
+
+        // Make sure the top character is a colon (58).
+        if (cursor.char() == ':') {
+            // likely go down here
+            @branchHint(.likely);
+
+            // move forward
+            cursor.advance(1);
+
+            // 0 length header keys are basically invalid.
+            if (cursor.current() == cursor.end) {
+                return error.Invalid;
+            }
+
+            // Set the header key.
+            header.key = key_start[0 .. key_end - key_start];
+
+            // Also check if the char is space (32), we can skip it.
+            if (cursor.char() == ' ') {
+                @branchHint(.likely);
+                cursor.advance(1);
+            }
+        } else {
+            return error.Invalid;
+        }
+
+        // Got the header key, continue with header value.
+        const val_start = cursor.current();
+        cursor.matchHeaderValue();
+        const val_end = cursor.current();
+
+        std.debug.print("{s}\n", .{val_start[0 .. val_end - val_start]});
+    }
+
     /// Parses HTTP request headers.
     /// If the provided `Headers` length is not sufficient, it returns `error.TooManyHeaders`.
     inline fn parseHeaders(cursor: *Cursor) ParseRequestError!void {
-        const bangs = comptime uniformBlock(uniform_bits, '!');
-        const ones = comptime uniformBlock(uniform_bits, 0x01);
-        const full_127 = comptime uniformBlock(uniform_bits, 0x7f);
-        const full_128 = comptime uniformBlock(uniform_bits, 128);
+        var header: Header = undefined;
+        try cursor.parseHeader(&header);
 
-        const chunk = cursor.asInteger(u64);
+        std.debug.print("{s}\n", .{header.key});
+    }
+};
 
-        const lt = (chunk -% bangs) & ~chunk;
-        const sub = chunk ^ full_127;
-        const has_127 = (sub - ones) & ~sub;
+const swar = struct {
+    /// Validates header key.
+    inline fn matchHeaderKey(cursor: *Cursor) void {
+        while (cursor.hasLength(block_size)) {
+            // TODO: documentation for parsing
+            const bangs = comptime uniformBlock(uniform_bits, '!');
+            const colons = comptime uniformBlock(uniform_bits, ':');
+            const ones = comptime uniformBlock(uniform_bits, 0x01);
+            const full_127 = comptime uniformBlock(uniform_bits, 0x7f);
+            const full_128 = comptime uniformBlock(uniform_bits, 128);
 
-        const adv_by = @ctz((lt | has_127) & full_128) >> 3;
+            const chunk = cursor.asInteger(u64);
 
-        std.debug.print("{any}\n", .{adv_by});
+            const lt = (chunk -% bangs) & ~chunk;
+
+            const xor_colons = chunk ^ colons;
+            const eq_colon = (xor_colons - ones) & ~xor_colons;
+
+            const xor_127 = chunk ^ full_127;
+            const eq_127 = (xor_127 - ones) & ~xor_127;
+
+            const adv_by = @ctz((lt | eq_127 | eq_colon) & full_128) >> 3;
+
+            cursor.advance(adv_by);
+
+            // chunk includes an invalid char or space, we're done
+            if (adv_by != block_size) {
+                return;
+            }
+        }
+
+        // Do a scalar search if there are bytes < block_size.
+        while (cursor.end - cursor.idx > 0) {
+            switch (cursor.char()) {
+                // invalid chars
+                0...' ', ':', 0x7f => return,
+                inline else => cursor.advance(1), // unroll
+            }
+        }
     }
 };
 
@@ -449,7 +574,6 @@ pub fn parseRequest(
     try cursor.parsePath(path);
     // parse the HTTP version
     try cursor.parseVersion(version);
-
     // TODO: implement parsing headers
     try cursor.parseHeaders();
 }
@@ -535,19 +659,8 @@ const avx = struct {
 // tests
 
 test parseRequest {
-    const buffer = comptimePrint("OPTIONS /tam-41-uzunlugunda-bir-http-path-i-yazma HTTP/1.1\r\nHost{c}: www.google.com\r\n", .{127});
-    std.debug.print("{s}\n", .{buffer});
-
-    // 1 1 1 1 1 0 1 0 => 250
-    // 1 1 1 1 1 0 1 1 => 251
-    // 1 1 1 1 1 1 0 0 => 252
-    // 1 1 1 1 1 1 0 1 => 253
-    // 1 1 1 1 1 1 1 0 => 254
-    // 1 1 1 1 1 1 1 1 => 255
-
-    // 0 0 1 1 1 0 1 0 => 58 => ':'
-    // 250 flipped
-    // 0 0 0 0 0 1 0 1 => 5
+    const buffer = comptimePrint("OPTIONS /tam-41-uzunlugunda-bir-http-path-i-yazma HTTP/1.1\r\nConnection: asdjqwd{c}ww-w-wwk2-32-asjkdsakf-s\r\n", .{31});
+    //std.debug.print("{s}\n", .{buffer});
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
