@@ -579,78 +579,10 @@ inline fn uniformBlock(comptime T: type, byte: u8) T {
     };
 }
 
-/// Ziggified Intel AVX/AVX2 Intrinsics.
-///
-/// Only a handful of them are implemented, might make it complete separate thing in the future :eyes:.
-const avx = struct {
-    /// Instruction: vlddqu ymm, m256
-    ///
-    /// Load 256-bits of integer data from unaligned memory into dst.
-    /// This intrinsic may perform better than _mm256_loadu_si256 when the data crosses a cache line boundary.
-    pub inline fn _mm256_lddqu_si256(
-        comptime Integer: type,
-        mem_addr: *align(1) const [256 / @bitSizeOf(Integer)]Integer,
-    ) @Vector(256 / @bitSizeOf(Integer), Integer) {
-        return asm volatile ("vlddqu %[ptr], %[dest]"
-            : [dest] "=x" (-> @Vector(256 / @bitSizeOf(Integer), Integer)),
-            : [ptr] "*m" (mem_addr[0..comptime (256 / @bitSizeOf(Integer))].*),
-            : "memory"
-        );
-    }
-
-    /// Instruction: vpmovmskb r32, ymm
-    ///
-    /// Create mask from the most significant bit of each 8-bit element in a, and store the result in dst.
-    pub inline fn _mm256_movemask_epi8(a: anytype) c_int {
-        return asm volatile ("vpmovmskb %[a], %[ret]"
-            : [ret] "=r" (-> c_int),
-            : [a] "x" (a),
-        );
-    }
-
-    /// Takes a mnemonic and 2 vectors of same type, returns a new vector of the same type.
-    pub inline fn __vec3(comptime mnemonic: []const u8, a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-        return asm volatile (comptimePrint("{s} %[a], %[b], %[dest]", .{mnemonic})
-            : [dest] "=x" (-> @TypeOf(a)),
-            : [a] "x" (a),
-              [b] "x" (b),
-        );
-    }
-
-    /// Instruction: vpcmpeqb ymm, ymm, ymm
-    ///
-    /// Compare packed 8-bit integers in a and b for equality, and store the results in dst.
-    pub inline fn _mm256_cmpeq_epi8(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-        return __vec3("vpcmpeqb", a, b);
-    }
-
-    /// Instruction: vpmaxub ymm, ymm, ymm
-    ///
-    /// Compare packed unsigned 8-bit integers in a and b, and store packed maximum values in dst.
-    pub inline fn _mm256_max_epu8(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-        return __vec3("vpmaxub", a, b);
-    }
-
-    /// Instruction: vpandn ymm, ymm, ymm
-    ///
-    /// Compute the bitwise NOT of 256 bits (representing integer data) in a and then AND with b, and store the result in dst.
-    pub inline fn _mm256_andnot_si256(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-        return __vec3("vpandn", a, b);
-    }
-
-    /// Instruction: vpor ymm, ymm, ymm
-    ///
-    /// Compute the bitwise OR of 256 bits (representing integer data) in a and b, and store the result in dst.
-    pub inline fn _mm256_or_si256(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-        return __vec3("vpor", a, b);
-    }
-};
-
 // tests
 
 test parseRequest {
     const buffer = comptimePrint("OPTIONS /tam-41-uzunlugunda-bir-http-path-i-yazma HTTP/1.1\r\nConnection: asdjqwd{c}ww-w-wwk2-32-asjkdsakf-s\r\n", .{31});
-    //std.debug.print("{s}\n", .{buffer});
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
