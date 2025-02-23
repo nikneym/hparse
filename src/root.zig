@@ -34,16 +34,9 @@ const VectorInt = std.meta.Int(.unsigned, vec_size);
 const block_size = @sizeOf(usize);
 
 // Get the size of a single chunk in comptime.
-const ChunkInt = switch (block_size) {
+const BlockType = switch (block_size) {
     4 => u32,
     8 => u64,
-    else => unreachable,
-};
-
-// Get which size of uniform bits we'll use in comptime.
-const uniform_bits = switch (block_size) {
-    4 => .@"32",
-    8 => .@"64",
     else => unreachable,
 };
 
@@ -293,11 +286,11 @@ const Cursor = struct {
         // It's better to stick to platform's block size rather than blindly using 64bit integers.
         while (cursor.hasLength(block_size)) {
             // Fill the largest integer with exclamation marks.
-            const bangs = comptime uniformBlock(uniform_bits, '!');
+            const bangs = comptime uniformBlock(BlockType, '!');
             // Fill the largest integer with 128.
-            const full_128 = comptime uniformBlock(uniform_bits, 128);
+            const full_128 = comptime uniformBlock(BlockType, 128);
             // Load the next chunk.
-            const chunk = cursor.asInteger(ChunkInt);
+            const chunk = cursor.asInteger(BlockType);
 
             // * When a byte in `chunk` is less than `!`, subtraction will wrap around and set the high bit.
             // * The AND NOT part is to make sure only the high bits of characters less than `!` be set.
@@ -497,16 +490,16 @@ const Cursor = struct {
 
 const swar = struct {
     /// Validates header key.
+    /// TODO: Documentation for what's going on here.
     inline fn matchHeaderKey(cursor: *Cursor) void {
         while (cursor.hasLength(block_size)) {
-            // TODO: documentation for parsing
-            const bangs = comptime uniformBlock(uniform_bits, '!');
-            const colons = comptime uniformBlock(uniform_bits, ':');
-            const ones = comptime uniformBlock(uniform_bits, 0x01);
-            const full_127 = comptime uniformBlock(uniform_bits, 0x7f);
-            const full_128 = comptime uniformBlock(uniform_bits, 128);
+            const bangs = comptime uniformBlock(BlockType, '!');
+            const colons = comptime uniformBlock(BlockType, ':');
+            const ones = comptime uniformBlock(BlockType, 0x01);
+            const full_127 = comptime uniformBlock(BlockType, 0x7f);
+            const full_128 = comptime uniformBlock(BlockType, 128);
 
-            const chunk = cursor.asInteger(u64);
+            const chunk = cursor.asInteger(BlockType);
 
             const lt = (chunk -% bangs) & ~chunk;
 
@@ -579,13 +572,10 @@ pub fn parseRequest(
 }
 
 /// Returns an integer filled with a given byte.
-inline fn uniformBlock(comptime bits: enum { @"32", @"64" }, byte: u8) switch (bits) {
-    .@"32" => u32,
-    .@"64" => u64,
-} {
-    return comptime switch (bits) {
-        .@"32" => @as(u32, byte) * 0x01_01_01_01,
-        .@"64" => @as(u64, byte) * 0x01_01_01_01_01_01_01_01,
+inline fn uniformBlock(comptime T: type, byte: u8) T {
+    return switch (type) {
+        u32 => @as(u32, byte) * 0x01_01_01_01,
+        u64 => @as(u64, byte) * 0x01_01_01_01_01_01_01_01,
     };
 }
 
