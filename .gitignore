@@ -1,2 +1,4 @@
 .zig-cache/
 zig-out/
+
+src/avx2.zig
