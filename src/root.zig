@@ -530,6 +530,22 @@ const swar = struct {
     }
 };
 
+/// Returns an integer filled with a given byte.
+inline fn uniformBlock(comptime T: type, byte: u8) T {
+    comptime {
+        const bits = @ctz(@as(T, 0));
+        const b = @as(T, byte);
+
+        return switch (bits) {
+            8 => b * 0x01,
+            16 => b * 0x01_01,
+            32 => b * 0x01_01_01_01,
+            64 => b * 0x01_01_01_01_01_01_01_01,
+            else => unreachable,
+        };
+    }
+}
+
 /// Parses an HTTP request.
 /// * `error.Incomplete` indicates more data is needed to complete the request.
 /// * `error.Invalid` indicates request is invalid/malformed.
@@ -571,18 +587,10 @@ pub fn parseRequest(
     try cursor.parseHeaders();
 }
 
-/// Returns an integer filled with a given byte.
-inline fn uniformBlock(comptime T: type, byte: u8) T {
-    return switch (type) {
-        u32 => @as(u32, byte) * 0x01_01_01_01,
-        u64 => @as(u64, byte) * 0x01_01_01_01_01_01_01_01,
-    };
-}
-
 // tests
 
 test parseRequest {
-    const buffer = comptimePrint("OPTIONS /tam-41-uzunlugunda-bir-http-path-i-yazma HTTP/1.1\r\nConnection: asdjqwd{c}ww-w-wwk2-32-asjkdsakf-s\r\n", .{31});
+    const buffer = comptimePrint("OPTIONS /tam-41-uzunlugunda-bir-http-path-i-yazma HTTP/1.1\r\nConnection", .{});
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
