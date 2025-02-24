@@ -84,8 +84,8 @@ const HTTP_1_1: u64 = @bitCast([8]u8{ 'H', 'T', 'T', 'P', '/', '1', '.', '1' });
 /// `GET / HTTP/1.1\n`
 const min_request_len = 0xf;
 
+// NOTE: Currently not used
 const token_map = [256]u1{
-    // Initialize all to 0
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, // ! # $ % & ' * +
