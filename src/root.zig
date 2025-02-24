@@ -74,7 +74,7 @@ const OPTI: u32 = @bitCast([4]u8{ 'O', 'P', 'T', 'I' });
 const TRAC: u32 = @bitCast([4]u8{ 'T', 'R', 'A', 'C' });
 const PATC: u32 = @bitCast([4]u8{ 'P', 'A', 'T', 'C' });
 
-// TODO: This might be slower on platforms with block size > 8.
+// NOTE: This might be slower on platforms with block size < 8.
 // HTTP versions interpreted as integers
 const HTTP_1_0: u64 = @bitCast([8]u8{ 'H', 'T', 'T', 'P', '/', '1', '.', '0' });
 const HTTP_1_1: u64 = @bitCast([8]u8{ 'H', 'T', 'T', 'P', '/', '1', '.', '1' });
