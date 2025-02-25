@@ -112,15 +112,10 @@ pub const ParseRequestError = error{ Incomplete, Invalid };
 const Cursor = struct {
     /// Pointer to current position of cursor.
     idx: [*]const u8,
-    /// Pointer to start of the buffer.
-    start: [*]const u8,
     /// Pointer to end of the buffer.
     end: [*]const u8,
-
-    /// Creates a new cursor.
-    fn init(start: [*]const u8, end: [*]const u8) Cursor {
-        return .{ .idx = start, .start = start, .end = end };
-    }
+    /// Pointer to start of the buffer.
+    start: [*]const u8,
 
     /// Returns the current position.
     inline fn current(cursor: *const Cursor) [*]const u8 {
@@ -332,8 +327,7 @@ const Cursor = struct {
 
         // Make sure the char caused `matchPath` to return is a space.
         if (cursor.char() == ' ') {
-            // likely go down here
-            @branchHint(.likely);
+            @branchHint(.likely); // likely go down here
 
             // set path
             path.* = path_start[0 .. path_end - path_start];
@@ -408,7 +402,7 @@ const Cursor = struct {
 
     /// Validate header values.
     inline fn matchHeaderValue(cursor: *Cursor) void {
-        // Prefer vectorized searches for header values.
+        // Unlike headers keys, prefer vectors initially when validating header values if possible.
         if (comptime use_vectors) {
             while (cursor.hasLength(vec_size)) {
                 // Fill a vector with TAB (\t, 9).
@@ -427,64 +421,137 @@ const Cursor = struct {
                 // advance the cursor
                 cursor.advance(adv_by);
 
-                // FIXME: EVERYTHING INCOMPLETE
-
                 // chunk includes an invalid char or CRLF, we're done
                 if (adv_by != vec_size) {
                     return;
                 }
             }
         }
+
+        // SWAR search
+        swar.matchHeaderValue(cursor);
     }
 
     /// Parses a single header.
     inline fn parseHeader(cursor: *Cursor, header: *Header) ParseRequestError!void {
-        // Initially, we should be at where header starts.
-        const key_start = cursor.current();
-        // We can prefer vectored search here, though header keys are generally short so it might be an overkill.
-        swar.matchHeaderKey(cursor);
-        const key_end = cursor.current();
+        // Parsing header key.
+        {
+            const key_start = cursor.current();
+            // We can prefer vectored search here, though header keys are generally short so it might be an overkill.
+            swar.matchHeaderKey(cursor);
+            const key_end = cursor.current();
 
-        // Make sure the top character is a colon (58).
-        if (cursor.char() == ':') {
-            // likely go down here
-            @branchHint(.likely);
+            // Set header key.
+            header.key = blk: {
+                // Make sure the top character is a colon (58).
+                if (cursor.char() == ':') {
+                    // This means 0 length header key, which is invalid.
+                    if (key_end == key_start) {
+                        return error.Invalid;
+                    }
 
-            // move forward
-            cursor.advance(1);
+                    // move forward
+                    cursor.advance(1);
 
-            // 0 length header keys are basically invalid.
-            if (cursor.current() == cursor.end) {
+                    // Set the header key.
+                    break :blk key_start[0 .. key_end - key_start];
+                }
+
+                // If we got here we've either;
+                // * Found an invalid character that's not colon (58),
+                // * Reached end of the buffer so this is likely a partial request.
+                if (key_end == cursor.end) {
+                    // No remaining bytes, though the caller can read more data and try to parse again.
+                    return error.Incomplete;
+                }
+
+                // Invalid character and not end of the buffer, so a malformed request. Can't go further.
                 return error.Invalid;
-            }
-
-            // Set the header key.
-            header.key = key_start[0 .. key_end - key_start];
-
-            // Also check if the char is space (32), we can skip it.
-            if (cursor.char() == ' ') {
-                @branchHint(.likely);
-                cursor.advance(1);
-            }
-        } else {
-            return error.Invalid;
+            };
         }
 
-        // Got the header key, continue with header value.
-        const val_start = cursor.current();
-        cursor.matchHeaderValue();
-        const val_end = cursor.current();
+        // Parsing header value.
+        {
+            // Get rid of leading spaces if there are any.
+            while (cursor.end - cursor.current() > 0 and cursor.char() == ' ') : (cursor.advance(1)) {}
 
-        std.debug.print("{s}\n", .{val_start[0 .. val_end - val_start]});
+            // Found where header value starts.
+            const val_start = cursor.current();
+            cursor.matchHeaderValue();
+            const val_end = cursor.current();
+
+            // Set header value.
+            header.value = blk: {
+                switch (cursor.char()) {
+                    // Both `\n` and `\r\n` indicate the end of value part.
+                    '\n' => cursor.advance(1),
+                    '\r' => {
+                        cursor.advance(1);
+
+                        // If there are no bytes, request is partial since we need a `\n` character too.
+                        if (cursor.current() == cursor.end) {
+                            return error.Incomplete;
+                        }
+
+                        // Check for not `\n`.
+                        if (cursor.char() != '\n') {
+                            @branchHint(.unlikely);
+                            return error.Invalid;
+                        }
+
+                        // move forward
+                        cursor.advance(1);
+                    },
+                    // Any other character is invalid.
+                    inline else => {
+                        if (val_end == cursor.end) {
+                            return error.Incomplete;
+                        }
+
+                        // Invalid character and not end of the buffer, so a malformed request. Can't go further.
+                        return error.Invalid;
+                    },
+                }
+
+                // Set the header value.
+                break :blk val_start[0 .. val_end - val_start];
+            };
+        }
     }
 
     /// Parses HTTP request headers.
     /// If the provided `Headers` length is not sufficient, it returns `error.TooManyHeaders`.
-    inline fn parseHeaders(cursor: *Cursor) ParseRequestError!void {
-        var header: Header = undefined;
-        try cursor.parseHeader(&header);
+    inline fn parseHeaders(cursor: *Cursor, headers: []Header, count: *usize) ParseRequestError!void {
+        for (0.., headers) |i, *header| {
+            // check if headers part has finished
+            switch (cursor.char()) {
+                '\n' => {
+                    cursor.advance(1);
+                    // end of headers
+                    count.* = i;
+                    break;
+                },
+                '\r' => {
+                    cursor.advance(1);
 
-        std.debug.print("{s}\n", .{header.key});
+                    if (cursor.current() == cursor.end) {
+                        return error.Incomplete;
+                    }
+
+                    if (cursor.char() != '\n') {
+                        return error.Invalid;
+                    }
+
+                    cursor.advance(1);
+                    // end of headers
+                    count.* = i;
+                    break;
+                },
+                else => {},
+            }
+
+            try cursor.parseHeader(header);
+        }
     }
 };
 
@@ -504,10 +571,10 @@ const swar = struct {
             const lt = (chunk -% bangs) & ~chunk;
 
             const xor_colons = chunk ^ colons;
-            const eq_colon = (xor_colons - ones) & ~xor_colons;
+            const eq_colon = (xor_colons -% ones) & ~xor_colons;
 
             const xor_127 = chunk ^ full_127;
-            const eq_127 = (xor_127 - ones) & ~xor_127;
+            const eq_127 = (xor_127 -% ones) & ~xor_127;
 
             const adv_by = @ctz((lt | eq_127 | eq_colon) & full_128) >> 3;
 
@@ -519,11 +586,52 @@ const swar = struct {
             }
         }
 
+        // TODO: prefer token map here
         // Do a scalar search if there are bytes < block_size.
         while (cursor.end - cursor.idx > 0) {
             switch (cursor.char()) {
                 // invalid chars
                 0...' ', ':', 0x7f => return,
+                inline else => cursor.advance(1), // unroll
+            }
+        }
+    }
+
+    /// Validates header value.
+    /// TODO: docs
+    inline fn matchHeaderValue(cursor: *Cursor) void {
+        while (cursor.hasLength(block_size)) {
+            const bangs = comptime uniformBlock(BlockType, ' ');
+            const ones = comptime uniformBlock(BlockType, 0x01);
+            const full_127 = comptime uniformBlock(BlockType, 0x7f);
+            const full_128 = comptime uniformBlock(BlockType, 128);
+
+            const chunk = cursor.asInteger(BlockType);
+
+            const lt = (chunk -% bangs) & ~chunk;
+
+            const xor_127 = chunk ^ full_127;
+            const eq_127 = (xor_127 - ones) & ~xor_127;
+
+            const adv_by = @ctz((lt | eq_127) & full_128) >> 3;
+
+            cursor.advance(adv_by);
+
+            // chunk includes an invalid char or space, we're done
+            if (adv_by != block_size) {
+                return;
+            }
+        }
+
+        // TODO: prefer token map here
+        // scalar search
+        while (cursor.end - cursor.idx > 0) {
+            // For some reason switch below exceeds the thousand branches limit.
+            @setEvalBranchQuota(1_000_000);
+
+            switch (cursor.char()) {
+                // invalid chars
+                0...31, 0x7f => return,
                 inline else => cursor.advance(1), // unroll
             }
         }
@@ -550,32 +658,31 @@ inline fn uniformBlock(comptime T: type, byte: u8) T {
 /// * `error.Incomplete` indicates more data is needed to complete the request.
 /// * `error.Invalid` indicates request is invalid/malformed.
 pub fn parseRequest(
-    /// Pointer to start of the buffer.
-    slice_start: [*]const u8,
-    /// Pointer to end of the buffer.
-    slice_end: [*]const u8,
+    // Slice we want to parse.
+    slice: []const u8,
     /// Parsed method. Will be set to `.unknown` initially.
     method: *Method,
     /// Parsed path. Will be set to `null` initially.
     path: *?[]const u8,
     /// Parsed HTTP version. Will be set to `.@"1.0"` initially.
     version: *Version,
+    /// Parsed headers will be found here.
+    headers: []Header,
+    header_count: *usize,
 ) ParseRequestError!void {
     // We expect at least 15 bytes to start processing.
-    if (slice_end - slice_start < min_request_len) {
+    if (slice.len < min_request_len) {
         return error.Incomplete;
     }
 
-    // reset the method
-    method.* = .unknown;
-    // reset the path
-    path.* = null;
-    // reset the version, default given version is 1.0
-    version.* = .@"1.0";
+    // Pointer to start of the buffer.
+    const slice_start = slice.ptr;
+    // Pointer to end of the buffer
+    const slice_end = slice.ptr + slice.len;
 
     // The cursor helps walking through bytes and parsing things.
     // I should better rename it to `Parser` since it's use cases are more similar to it.
-    var cursor = Cursor.init(slice_start, slice_end);
+    var cursor = Cursor{ .idx = slice_start, .end = slice_end, .start = slice_start };
 
     // parse the method
     try cursor.parseMethod(method);
@@ -583,24 +690,46 @@ pub fn parseRequest(
     try cursor.parsePath(path);
     // parse the HTTP version
     try cursor.parseVersion(version);
-    // TODO: implement parsing headers
-    try cursor.parseHeaders();
+    // parse HTTP headers
+    try cursor.parseHeaders(headers, header_count);
 }
 
 // tests
 
 test parseRequest {
-    const buffer = comptimePrint("OPTIONS /tam-41-uzunlugunda-bir-http-path-i-yazma HTTP/1.1\r\nConnection", .{});
+    const buffer: []const u8 = "GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConnection: keep-alive\r\nCache-Control: max-age=0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.56 Safari/537.17\r\nAccept-Encoding: gzip,deflate,sdch\r\nAccept-Language: en-US,en;q=0.8\r\nAccept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.3\r\nCookie: name=wookie\r\n\r\n";
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
     var http_version: Version = .@"1.0";
+    var headers: [64]Header = undefined;
+    var header_count: usize = 0;
 
-    parseRequest(buffer.ptr, buffer.ptr + buffer.len, &method, &path, &http_version) catch |err| switch (err) {
+    parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
         error.Incomplete => std.debug.print("need more bytes\n", .{}),
         error.Invalid => std.debug.print("invalid!\n", .{}),
     };
 
-    std.debug.print("HTTP method: {}\nHTTP version: {}\n", .{ method, http_version });
-    std.debug.print("path: {?s}\n", .{path});
+    std.debug.print("{}\t{}\n", .{ method, http_version });
+    std.debug.print("path: {s}\n", .{path.?});
+
+    for (headers[0..header_count]) |header| {
+        std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
+    }
+
+    //const min: @Vector(8, u8) = @splat('A' - 1);
+    //const max: @Vector(8, u8) = @splat('Z');
+    //
+    //const chunk: @Vector(8, u8) = "tEsTINgG".*;
+    //
+    //const bits = @intFromBool(chunk <= max) & @intFromBool(chunk > min);
+    //var res: u8 = @bitCast(bits);
+    //
+    //while (res != 0) {
+    //    const t = res & -%res;
+    //    defer res ^= t;
+    //
+    //    const idx = @ctz(t);
+    //    std.debug.print("{c}\n", .{chunk[idx]});
+    //}
 }
