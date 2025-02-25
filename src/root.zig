@@ -438,7 +438,8 @@ const Cursor = struct {
         {
             const key_start = cursor.current();
             // We can prefer vectored search here, though header keys are generally short so it might be an overkill.
-            swar.matchHeaderKey(cursor);
+            //swar.matchHeaderKey(cursor);
+            vector.matchHeaderKey(cursor);
             const key_end = cursor.current();
 
             // Set header key.
@@ -555,40 +556,100 @@ const Cursor = struct {
     }
 };
 
-const swar = struct {
+/// Table of valid header key characters.
+/// Where zeros are invalid and ones are valid.
+const valid_key_chars = [256]u1{
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+
+/// Checks if a given character is a valid header key character.
+inline fn isValidKeyChar(c: u8) bool {
+    return valid_key_chars[c] == 0;
+}
+
+const vector = struct {
     /// Validates header key.
-    /// TODO: Documentation for what's going on here.
+    /// Prefers SSE (128-bits) instead since header keys are rather small.
     inline fn matchHeaderKey(cursor: *Cursor) void {
-        while (cursor.hasLength(block_size)) {
-            const bangs = comptime uniformBlock(BlockType, '!');
-            const colons = comptime uniformBlock(BlockType, ':');
-            const ones = comptime uniformBlock(BlockType, 0x01);
-            const full_127 = comptime uniformBlock(BlockType, 0x7f);
-            const full_128 = comptime uniformBlock(BlockType, 128);
+        const sse_vec_size = 16;
+        const Vec = @Vector(sse_vec_size, u8);
+        const Int = std.meta.Int(.unsigned, sse_vec_size);
 
-            const chunk = cursor.asInteger(BlockType);
+        while (cursor.hasLength(sse_vec_size)) {
+            const spaces: Vec = @splat(' ');
+            const colons: Vec = @splat(':');
+            const deletes: Vec = @splat(0x7f);
 
-            const lt = (chunk -% bangs) & ~chunk;
+            const chunk = cursor.asVector(sse_vec_size);
 
-            const xor_colons = chunk ^ colons;
-            const eq_colon = (xor_colons -% ones) & ~xor_colons;
+            const bits = @intFromBool(chunk > spaces) & ~(@intFromBool(chunk == colons) | @intFromBool(chunk == deletes));
 
-            const xor_127 = chunk ^ full_127;
-            const eq_127 = (xor_127 -% ones) & ~xor_127;
+            const adv_by = @ctz(~@as(Int, @bitCast(bits)));
 
-            const adv_by = @ctz((lt | eq_127 | eq_colon) & full_128) >> 3;
-
+            // advance the cursor
             cursor.advance(adv_by);
 
-            // chunk includes an invalid char or space, we're done
-            if (adv_by != block_size) {
+            // chunk includes an invalid char or CRLF, we're done
+            if (adv_by != sse_vec_size) {
                 return;
             }
         }
 
+        // fallback
+        while (isValidKeyChar(cursor.char())) : (cursor.advance(1)) {}
+        //swar.matchHeaderKey(cursor);
+    }
+};
+
+const swar = struct {
+    /// Validates header key.
+    /// TODO: Documentation for what's going on here.
+    inline fn matchHeaderKey(cursor: *Cursor) void {
+        //while (cursor.hasLength(block_size)) {
+        //    const bangs = comptime uniformBlock(BlockType, '!');
+        //    const colons = comptime uniformBlock(BlockType, ':');
+        //    const ones = comptime uniformBlock(BlockType, 0x01);
+        //    const full_127 = comptime uniformBlock(BlockType, 0x7f);
+        //    const full_128 = comptime uniformBlock(BlockType, 128);
+        //
+        //    const chunk = cursor.asInteger(BlockType);
+        //
+        //    const lt = (chunk -% bangs) & ~chunk;
+        //
+        //    const xor_colons = chunk ^ colons;
+        //    const eq_colon = (xor_colons -% ones) & ~xor_colons;
+        //
+        //    const xor_127 = chunk ^ full_127;
+        //    const eq_127 = (xor_127 -% ones) & ~xor_127;
+        //
+        //    const adv_by = @ctz((lt | eq_127 | eq_colon) & full_128) >> 3;
+        //
+        //    cursor.advance(adv_by);
+        //
+        //    // chunk includes an invalid char or space, we're done
+        //    if (adv_by != block_size) {
+        //        return;
+        //    }
+        //}
+
         // TODO: prefer token map here
         // Do a scalar search if there are bytes < block_size.
-        while (cursor.end - cursor.idx > 0) {
+        while (cursor.idx != cursor.end) {
             switch (cursor.char()) {
                 // invalid chars
                 0...' ', ':', 0x7f => return,
@@ -716,6 +777,18 @@ test parseRequest {
     for (headers[0..header_count]) |header| {
         std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
     }
+
+    //var tokens: [256]u1 = std.mem.zeroes([256]u1);
+    //@memset(&tokens, 1);
+    //
+    //tokens[58] = 0;
+    //tokens[127] = 0;
+    //
+    //for (0..32) |i| {
+    //    tokens[i] = 0;
+    //}
+    //
+    //std.debug.print("{any}\n", .{tokens});
 
     //const min: @Vector(8, u8) = @splat('A' - 1);
     //const max: @Vector(8, u8) = @splat('Z');
