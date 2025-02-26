@@ -1,6 +1,5 @@
 //! zero allocation, stateless and streaming HTTP parser module.
 //! By streaming, it can parse partially received HTTP requests.
-//! Some HTTP methods are not supported intentionally, namely `CONNECT` and `TRACE`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -48,7 +47,9 @@ pub const Method = enum(u8) {
     head,
     put,
     delete,
+    connect,
     options,
+    trace,
     patch,
 };
 
@@ -67,10 +68,8 @@ const HEAD: u32 = @bitCast([4]u8{ 'H', 'E', 'A', 'D' });
 const POST: u32 = @bitCast([4]u8{ 'P', 'O', 'S', 'T' });
 const PUT_: u32 = @bitCast([4]u8{ 'P', 'U', 'T', ' ' });
 const DELE: u32 = @bitCast([4]u8{ 'D', 'E', 'L', 'E' });
-// CONNECT method is not supported
 const CONN: u32 = @bitCast([4]u8{ 'C', 'O', 'N', 'N' });
 const OPTI: u32 = @bitCast([4]u8{ 'O', 'P', 'T', 'I' });
-// TRACE method is not supported
 const TRAC: u32 = @bitCast([4]u8{ 'T', 'R', 'A', 'C' });
 const PATC: u32 = @bitCast([4]u8{ 'P', 'A', 'T', 'C' });
 
@@ -198,11 +197,29 @@ const Cursor = struct {
 
                 return error.Invalid;
             },
+            CONN => {
+                // expect `ECT ` after this
+                if (cursor.peek4('E', 'C', 'T', ' ')) {
+                    cursor.advance(4);
+                    break :blk .connect;
+                }
+
+                return error.Invalid;
+            },
             OPTI => {
                 // expect `ONS ` after this
                 if (cursor.peek4('O', 'N', 'S', ' ')) {
                     cursor.advance(4);
                     break :blk .options;
+                }
+
+                return error.Invalid;
+            },
+            TRAC => {
+                // expect `E ` after this
+                if (cursor.peek2('E', ' ')) {
+                    cursor.advance(2);
+                    break :blk .trace;
                 }
 
                 return error.Invalid;
@@ -738,7 +755,7 @@ pub fn parseRequest(
 // tests
 
 test parseRequest {
-    const buffer: []const u8 = "GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConnection: keep-alive\r\nCache-Control: max-age=0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.56 Safari/537.17\r\nAccept-Encoding: gzip,deflate,sdch\r\nAccept-Language: en-US,en;q=0.8\r\nAccept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.3\r\nCookie: name=wookie\r\n\r\n";
+    const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConnection: keep-alive\r\nCache-Control: max-age=0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.56 Safari/537.17\r\nAccept-Encoding: gzip,deflate,sdch\r\nAccept-Language: en-US,en;q=0.8\r\nAccept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.3\r\nCookie: name=wookie\r\n\r\n";
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
