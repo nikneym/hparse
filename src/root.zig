@@ -37,7 +37,7 @@ const block_size = @sizeOf(usize);
 const BlockType = switch (block_size) {
     4 => u32,
     8 => u64,
-    else => unreachable,
+    else => @compileError("unexpected block_size"),
 };
 
 /// HTTP methods
