@@ -558,29 +558,27 @@ const Cursor = struct {
 };
 
 /// Table of valid header key characters.
-/// Where zeros are invalid and ones are valid.
-const valid_key_chars = [256]u1{
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-};
+const key_map = createCharMap(.{
+    // Invalid characters.
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, ':', 127,
+});
 
 /// Checks if a given character is a valid header key character.
 inline fn isValidKeyChar(c: u8) bool {
-    return valid_key_chars[c] == 0;
+    return key_map[c] != 0;
+}
+
+/// Table of valid header value characters.
+const value_map = createCharMap(.{
+    // Invalid characters.
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 127,
+});
+
+/// Checks if a given character is a valid header value character.
+inline fn isValidValueChar(c: u8) bool {
+    return value_map[c] != 0;
 }
 
 const vector = struct {
@@ -711,10 +709,26 @@ inline fn uniformBlock(comptime T: type, byte: u8) T {
             16 => b * 0x01_01,
             32 => b * 0x01_01_01_01,
             64 => b * 0x01_01_01_01_01_01_01_01,
-            else => unreachable,
+            else => @compileError("unexpected uniform size"),
         };
     }
 }
+
+/// Returns a table of 8-bit characters where zeros are invalid and ones are valid.
+inline fn createCharMap(comptime invalids: anytype) [256]u1 {
+    comptime {
+        var map: [256]u1 = undefined;
+        // Set each index initially.
+        @memset(&map, 1);
+
+        // Unset invalid characters.
+        for (invalids) |c| map[c] = 0;
+
+        return map;
+    }
+}
+
+// Public API
 
 /// Parses an HTTP request.
 /// * `error.Incomplete` indicates more data is needed to complete the request.
