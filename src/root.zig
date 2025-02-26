@@ -724,7 +724,7 @@ pub fn parseRequest(
     try cursor.parseHeaders(headers, header_count);
 }
 
-// tests
+// Tests
 
 test parseRequest {
     const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost:\r\n\r\n";
