@@ -304,14 +304,10 @@ const Cursor = struct {
             }
         }
 
-        // NOTE: I believe we can do SWAR for >= 4 at here, for 64-bit platforms.
-
         // last resort, scalar search
         while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
-            switch (cursor.char()) {
-                // invalid chars
-                0...' ', 0x7f => return,
-                inline else => continue, // unroll
+            if (!isValidPathChar(cursor.char())) {
+                return;
             }
         }
     }
@@ -619,6 +615,18 @@ const Cursor = struct {
         }
     }
 };
+
+/// Table of valid path characters.
+const path_map = createCharMap(.{
+    // Invalid characters.
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, ' ', 127,
+});
+
+/// Checks if a given character is a valid path character.
+inline fn isValidPathChar(c: u8) bool {
+    return path_map[c] != 0;
+}
 
 /// Table of valid header key characters.
 const key_map = createCharMap(.{
