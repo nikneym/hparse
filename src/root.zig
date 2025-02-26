@@ -234,7 +234,6 @@ const Cursor = struct {
         }; // method + trailing space is consumed
     }
 
-    /// TODO: we might want to separate the searches to related functions.
     /// Validates path characters and advances the cursor as much as validated.
     inline fn matchPath(cursor: *Cursor) void {
         // SIMD (vectorized) search
@@ -401,7 +400,45 @@ const Cursor = struct {
         }
     }
 
-    /// Validate header values.
+    /// Validates header keys.
+    /// Prefers SSE (128-bits) instead since header keys are rather small.
+    inline fn matchHeaderKey(cursor: *Cursor) void {
+        const sse_vec_size = 16;
+        const Vec = @Vector(sse_vec_size, u8);
+        const Int = std.meta.Int(.unsigned, sse_vec_size);
+
+        while (cursor.hasLength(sse_vec_size)) {
+            const spaces: Vec = @splat(' ');
+            const colons: Vec = @splat(':');
+            const deletes: Vec = @splat(0x7f);
+
+            const chunk = cursor.asVector(sse_vec_size);
+
+            const bits = @intFromBool(chunk > spaces) & ~(@intFromBool(chunk == colons) | @intFromBool(chunk == deletes));
+
+            const adv_by = @ctz(~@as(Int, @bitCast(bits)));
+
+            // advance the cursor
+            cursor.advance(adv_by);
+
+            // chunk includes an invalid char or CRLF, we're done
+            if (adv_by != sse_vec_size) {
+                return;
+            }
+        }
+
+        // NOTE: SWAR is not preferred here, this might change in the future
+        // but honestly header keys are not so long.
+
+        // fallback for len < 16
+        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
+            if (!isValidKeyChar(cursor.char())) {
+                return;
+            }
+        }
+    }
+
+    /// Validates header values.
     inline fn matchHeaderValue(cursor: *Cursor) void {
         // Unlike headers keys, prefer vectors initially when validating header values if possible.
         if (comptime use_vectors) {
@@ -430,7 +467,35 @@ const Cursor = struct {
         }
 
         // SWAR search
-        swar.matchHeaderValue(cursor);
+        while (cursor.hasLength(block_size)) {
+            const bangs = comptime uniformBlock(BlockType, ' ');
+            const ones = comptime uniformBlock(BlockType, 0x01);
+            const dels = comptime uniformBlock(BlockType, 0x7f);
+            const full_128 = comptime uniformBlock(BlockType, 128);
+
+            const chunk = cursor.asInteger(BlockType);
+
+            const lt = (chunk -% bangs) & ~chunk;
+
+            const xor_dels = chunk ^ dels;
+            const eq_del = (xor_dels -% ones) & ~xor_dels;
+
+            const adv_by = @ctz((lt | eq_del) & full_128) >> 3;
+
+            cursor.advance(adv_by);
+
+            // chunk includes an invalid char or space, we're done
+            if (adv_by != block_size) {
+                return;
+            }
+        }
+
+        // fallback, scalar search
+        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
+            if (!isValidValueChar(cursor.char())) {
+                return;
+            }
+        }
     }
 
     /// Parses a single header.
@@ -438,9 +503,7 @@ const Cursor = struct {
         // Parsing header key.
         {
             const key_start = cursor.current();
-            // We can prefer vectored search here, though header keys are generally short so it might be an overkill.
-            //swar.matchHeaderKey(cursor);
-            vector.matchHeaderKey(cursor);
+            cursor.matchHeaderKey();
             const key_end = cursor.current();
 
             // Set header key.
@@ -580,86 +643,6 @@ const value_map = createCharMap(.{
 inline fn isValidValueChar(c: u8) bool {
     return value_map[c] != 0;
 }
-
-const vector = struct {
-    /// Validates header key.
-    /// Prefers SSE (128-bits) instead since header keys are rather small.
-    inline fn matchHeaderKey(cursor: *Cursor) void {
-        const sse_vec_size = 16;
-        const Vec = @Vector(sse_vec_size, u8);
-        const Int = std.meta.Int(.unsigned, sse_vec_size);
-
-        while (cursor.hasLength(sse_vec_size)) {
-            const spaces: Vec = @splat(' ');
-            const colons: Vec = @splat(':');
-            const deletes: Vec = @splat(0x7f);
-
-            const chunk = cursor.asVector(sse_vec_size);
-
-            const bits = @intFromBool(chunk > spaces) & ~(@intFromBool(chunk == colons) | @intFromBool(chunk == deletes));
-
-            const adv_by = @ctz(~@as(Int, @bitCast(bits)));
-
-            // advance the cursor
-            cursor.advance(adv_by);
-
-            // chunk includes an invalid char or CRLF, we're done
-            if (adv_by != sse_vec_size) {
-                return;
-            }
-        }
-
-        // fallback for len < 16
-        swar.matchHeaderKey(cursor);
-    }
-};
-
-const swar = struct {
-    /// Validates bytes for header key scalar way.
-    /// This seem to give better results currently.
-    inline fn matchHeaderKey(cursor: *Cursor) void {
-        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
-            if (!isValidKeyChar(cursor.char())) {
-                return;
-            }
-        }
-    }
-
-    /// Validates header value.
-    /// TODO: docs
-    inline fn matchHeaderValue(cursor: *Cursor) void {
-        // SWAR search
-        while (cursor.hasLength(block_size)) {
-            const bangs = comptime uniformBlock(BlockType, ' ');
-            const ones = comptime uniformBlock(BlockType, 0x01);
-            const dels = comptime uniformBlock(BlockType, 0x7f);
-            const full_128 = comptime uniformBlock(BlockType, 128);
-
-            const chunk = cursor.asInteger(BlockType);
-
-            const lt = (chunk -% bangs) & ~chunk;
-
-            const xor_dels = chunk ^ dels;
-            const eq_del = (xor_dels -% ones) & ~xor_dels;
-
-            const adv_by = @ctz((lt | eq_del) & full_128) >> 3;
-
-            cursor.advance(adv_by);
-
-            // chunk includes an invalid char or space, we're done
-            if (adv_by != block_size) {
-                return;
-            }
-        }
-
-        // fallback, scalar search
-        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
-            if (!isValidValueChar(cursor.char())) {
-                return;
-            }
-        }
-    }
-};
 
 /// Returns an integer filled with a given byte.
 inline fn uniformBlock(comptime T: type, byte: u8) T {
