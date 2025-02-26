@@ -19,7 +19,7 @@ const use_vectors = blk: {
 /// If `use_vectors` is false, this gives the default block size for the CPU.
 const vec_size = blk: {
     if (std.simd.suggestVectorLength(u8)) |recommended| {
-        // I'm not so familiar with AVX512 and newer SIMD stuff yet, let's stick to 32 for cases >= 64.
+        // In the future, we can look for ways to utilize 512-bit (AVX-512) or even larger registers.
         break :blk if (recommended >= 64) 32 else recommended;
     } else {
         // If vectors are not recommended, we prefer the default block size.
