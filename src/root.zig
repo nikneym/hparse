@@ -609,50 +609,18 @@ const vector = struct {
             }
         }
 
-        // fallback
-        while (isValidKeyChar(cursor.char())) : (cursor.advance(1)) {}
-        //swar.matchHeaderKey(cursor);
+        // fallback for len < 16
+        swar.matchHeaderKey(cursor);
     }
 };
 
 const swar = struct {
-    /// Validates header key.
-    /// TODO: Documentation for what's going on here.
+    /// Validates bytes for header key scalar way.
+    /// This seem to give better results currently.
     inline fn matchHeaderKey(cursor: *Cursor) void {
-        //while (cursor.hasLength(block_size)) {
-        //    const bangs = comptime uniformBlock(BlockType, '!');
-        //    const colons = comptime uniformBlock(BlockType, ':');
-        //    const ones = comptime uniformBlock(BlockType, 0x01);
-        //    const full_127 = comptime uniformBlock(BlockType, 0x7f);
-        //    const full_128 = comptime uniformBlock(BlockType, 128);
-        //
-        //    const chunk = cursor.asInteger(BlockType);
-        //
-        //    const lt = (chunk -% bangs) & ~chunk;
-        //
-        //    const xor_colons = chunk ^ colons;
-        //    const eq_colon = (xor_colons -% ones) & ~xor_colons;
-        //
-        //    const xor_127 = chunk ^ full_127;
-        //    const eq_127 = (xor_127 -% ones) & ~xor_127;
-        //
-        //    const adv_by = @ctz((lt | eq_127 | eq_colon) & full_128) >> 3;
-        //
-        //    cursor.advance(adv_by);
-        //
-        //    // chunk includes an invalid char or space, we're done
-        //    if (adv_by != block_size) {
-        //        return;
-        //    }
-        //}
-
-        // TODO: prefer token map here
-        // Do a scalar search if there are bytes < block_size.
-        while (cursor.idx != cursor.end) {
-            switch (cursor.char()) {
-                // invalid chars
-                0...' ', ':', 0x7f => return,
-                inline else => cursor.advance(1), // unroll
+        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
+            if (!isValidKeyChar(cursor.char())) {
+                return;
             }
         }
     }
@@ -660,20 +628,21 @@ const swar = struct {
     /// Validates header value.
     /// TODO: docs
     inline fn matchHeaderValue(cursor: *Cursor) void {
+        // SWAR search
         while (cursor.hasLength(block_size)) {
             const bangs = comptime uniformBlock(BlockType, ' ');
             const ones = comptime uniformBlock(BlockType, 0x01);
-            const full_127 = comptime uniformBlock(BlockType, 0x7f);
+            const dels = comptime uniformBlock(BlockType, 0x7f);
             const full_128 = comptime uniformBlock(BlockType, 128);
 
             const chunk = cursor.asInteger(BlockType);
 
             const lt = (chunk -% bangs) & ~chunk;
 
-            const xor_127 = chunk ^ full_127;
-            const eq_127 = (xor_127 - ones) & ~xor_127;
+            const xor_dels = chunk ^ dels;
+            const eq_del = (xor_dels -% ones) & ~xor_dels;
 
-            const adv_by = @ctz((lt | eq_127) & full_128) >> 3;
+            const adv_by = @ctz((lt | eq_del) & full_128) >> 3;
 
             cursor.advance(adv_by);
 
@@ -683,16 +652,10 @@ const swar = struct {
             }
         }
 
-        // TODO: prefer token map here
-        // scalar search
-        while (cursor.end - cursor.idx > 0) {
-            // For some reason switch below exceeds the thousand branches limit.
-            @setEvalBranchQuota(1_000_000);
-
-            switch (cursor.char()) {
-                // invalid chars
-                0...31, 0x7f => return,
-                inline else => cursor.advance(1), // unroll
+        // fallback, scalar search
+        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
+            if (!isValidValueChar(cursor.char())) {
+                return;
             }
         }
     }
