@@ -272,12 +272,15 @@ const Cursor = struct {
         }
 
         // SWAR search
-        // FIXME: This is missing checks for 0x7f (DEL)
-        // It's better to stick to platform's block size rather than blindly using 64bit integers.
+        // It's better to stick to platform's block size rather than blindly using 64-bit integers.
         while (cursor.hasLength(block_size)) {
             // Fill the largest integer with exclamation marks.
             const bangs = comptime uniformBlock(BlockType, '!');
-            // Fill the largest integer with 128.
+            // Fill the largest integer with DEL.
+            const del = comptime uniformBlock(BlockType, 0x7f);
+            // Fill the largest integer with 1.
+            const one = comptime uniformBlock(BlockType, 0x01);
+            // Fill the largest integer with € (128).
             const full_128 = comptime uniformBlock(BlockType, 128);
             // Load the next chunk.
             const chunk = cursor.asInteger(BlockType);
@@ -286,9 +289,12 @@ const Cursor = struct {
             // * The AND NOT part is to make sure only the high bits of characters less than `!` be set.
             const lt = (chunk -% bangs) & ~chunk;
 
+            const xor_del = chunk ^ del;
+            const eq_del = (xor_del -% one) & ~xor_del; // == DEL
+
             // * Create a bitmask out of high bits and count trailing zeroes.
             // * Dividing by byte size (>> 3) converts the bit position to byte index.
-            const adv_by = @ctz(lt & full_128) >> 3;
+            const adv_by = @ctz((lt | eq_del) & full_128) >> 3;
 
             // advance the cursor
             cursor.advance(adv_by);
