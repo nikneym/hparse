@@ -6,6 +6,9 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const comptimePrint = std.fmt.comptimePrint;
 
+/// Block size of the CPU.
+const block_size = @sizeOf(usize);
+
 // If suggested vector length is null, prefer not to use vectors!
 const use_vectors = blk: {
     const recommended = std.simd.suggestVectorLength(u8);
@@ -26,9 +29,6 @@ const vec_size = blk: {
 
 /// `vec_size` as unsigned integer type.
 const VectorInt = std.meta.Int(.unsigned, vec_size);
-
-/// Block size of the CPU.
-const block_size = @sizeOf(usize);
 
 /// HTTP methods
 pub const Method = enum(u8) {
@@ -391,27 +391,29 @@ const Cursor = struct {
     /// Validates header keys.
     /// Prefers SSE (128-bits) instead since header keys are rather small.
     inline fn matchHeaderKey(cursor: *Cursor) void {
-        const sse_vec_size = 16;
-        const Vec = @Vector(sse_vec_size, u8);
-        const Int = std.meta.Int(.unsigned, sse_vec_size);
+        if (comptime use_vectors) {
+            const sse_vec_size = 16;
+            const Vec = @Vector(sse_vec_size, u8);
+            const Int = std.meta.Int(.unsigned, sse_vec_size);
 
-        while (cursor.hasLength(sse_vec_size)) {
-            const spaces: Vec = @splat(' ');
-            const colons: Vec = @splat(':');
-            const deletes: Vec = @splat(0x7f);
+            while (cursor.hasLength(sse_vec_size)) {
+                const spaces: Vec = @splat(' ');
+                const colons: Vec = @splat(':');
+                const deletes: Vec = @splat(0x7f);
 
-            const chunk = cursor.asVector(sse_vec_size);
+                const chunk = cursor.asVector(sse_vec_size);
 
-            const bits = @intFromBool(chunk > spaces) & ~(@intFromBool(chunk == colons) | @intFromBool(chunk == deletes));
+                const bits = @intFromBool(chunk > spaces) & ~(@intFromBool(chunk == colons) | @intFromBool(chunk == deletes));
 
-            const adv_by = @ctz(~@as(Int, @bitCast(bits)));
+                const adv_by = @ctz(~@as(Int, @bitCast(bits)));
 
-            // advance the cursor
-            cursor.advance(adv_by);
+                // advance the cursor
+                cursor.advance(adv_by);
 
-            // chunk includes an invalid char or CRLF, we're done
-            if (adv_by != sse_vec_size) {
-                return;
+                // chunk includes an invalid char or CRLF, we're done
+                if (adv_by != sse_vec_size) {
+                    return;
+                }
             }
         }
 
