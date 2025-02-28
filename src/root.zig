@@ -709,14 +709,15 @@ inline fn createCharMap(comptime invalids: anytype) [256]u1 {
 pub fn parseRequest(
     // Slice we want to parse.
     slice: []const u8,
-    /// Parsed method. Will be set to `.unknown` initially.
+    /// Parsed method will be stored here.
     method: *Method,
-    /// Parsed path. Will be set to `null` initially.
+    /// Parsed path will be stored here.
     path: *?[]const u8,
-    /// Parsed HTTP version. Will be set to `.@"1.0"` initially.
+    /// Parsed HTTP version will be stored here.
     version: *Version,
-    /// Parsed headers will be found here.
+    /// Parsed headers will be stored here.
     headers: []Header,
+    /// When the function returns, count of parsed headers will be set here.
     header_count: *usize,
 ) ParseRequestError!usize {
     // We expect at least 15 bytes to start processing.
