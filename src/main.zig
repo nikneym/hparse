@@ -16,7 +16,7 @@ pub fn main() !void {
             var headers: [32]Header = undefined;
             var header_count: usize = 0;
 
-            try hparse.parseRequest(
+            _ = try hparse.parseRequest(
                 buffer[0..],
                 &method,
                 &path,

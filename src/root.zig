@@ -699,7 +699,7 @@ pub fn parseRequest(
     /// Parsed headers will be found here.
     headers: []Header,
     header_count: *usize,
-) ParseRequestError!void {
+) ParseRequestError!usize {
     // We expect at least 15 bytes to start processing.
     if (slice.len < min_request_len) {
         return error.Incomplete;
@@ -722,12 +722,15 @@ pub fn parseRequest(
     try cursor.parseVersion(version);
     // parse HTTP headers
     try cursor.parseHeaders(headers, header_count);
+
+    // Return the total consumed length to caller.
+    return cursor.idx - cursor.start;
 }
 
 // Tests
 
 test parseRequest {
-    const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost:\r\n\r\n";
+    const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost: asdjqwdkwfj\r\nConnection: keep-alive\r\n\r\n";
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
@@ -735,9 +738,9 @@ test parseRequest {
     var headers: [64]Header = undefined;
     var header_count: usize = 0;
 
-    parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
-        error.Incomplete => std.debug.print("need more bytes\n", .{}),
-        error.Invalid => std.debug.print("invalid!\n", .{}),
+    const len = parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
+        error.Incomplete => @panic("need more bytes"),
+        error.Invalid => @panic("invalid!"),
     };
 
     std.debug.print("{}\t{}\n", .{ method, http_version });
@@ -746,6 +749,8 @@ test parseRequest {
     for (headers[0..header_count]) |header| {
         std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
     }
+
+    std.debug.print("len: {any}\n", .{len});
 
     //var tokens: [256]u1 = std.mem.zeroes([256]u1);
     //@memset(&tokens, 1);
