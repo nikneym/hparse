@@ -434,7 +434,7 @@ const Cursor = struct {
         if (comptime use_vectors) {
             while (cursor.hasLength(vec_size)) {
                 // Fill a vector with TAB (\t, 9).
-                const tabs: @Vector(vec_size, u8) = @splat(0x9);
+                //const tabs: @Vector(vec_size, u8) = @splat(0x9);
                 // Fill a vector with DEL (127).
                 const deletes: @Vector(vec_size, u8) = @splat(0x7f);
                 // Fill a vector with US (31).
@@ -442,7 +442,8 @@ const Cursor = struct {
                 // Load the next chunk from the buffer.
                 const chunk = cursor.asVector(vec_size);
 
-                const bits = @intFromBool(chunk > full_31) | @intFromBool(chunk == tabs) & ~@intFromBool(chunk == deletes);
+                //const bits = @intFromBool(chunk > full_31) | @intFromBool(chunk == tabs) & ~@intFromBool(chunk == deletes);
+                const bits = @intFromBool(chunk > full_31) & ~@intFromBool(chunk == deletes);
 
                 const adv_by = @ctz(~@as(VectorInt, @bitCast(bits)));
 
