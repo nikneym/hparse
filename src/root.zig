@@ -459,14 +459,14 @@ const Cursor = struct {
 
         // SWAR search
         while (cursor.hasLength(block_size)) {
-            const bangs = comptime broadcast(usize, ' ');
+            const spaces = comptime broadcast(usize, ' ');
             const ones = comptime broadcast(usize, 0x01);
             const dels = comptime broadcast(usize, 0x7f);
             const full_128 = comptime broadcast(usize, 128);
 
             const chunk = cursor.asInteger(usize);
 
-            const lt = (chunk -% bangs) & ~chunk;
+            const lt = (chunk -% spaces) & ~chunk;
 
             const xor_dels = chunk ^ dels;
             const eq_del = (xor_dels -% ones) & ~xor_dels;
