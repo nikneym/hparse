@@ -496,27 +496,30 @@ const Cursor = struct {
         const key_end = cursor.current();
 
         // Make sure the invalid character is a colon (58).
-        if (cursor.char() == ':') {
-            @branchHint(.likely);
+        switch (cursor.char()) {
+            ':' => {
+                @branchHint(.likely);
 
-            // This means 0 length header key, which is invalid.
-            if (key_end == key_start) {
+                // This means 0 length header key, which is invalid.
+                if (key_end == key_start) {
+                    return error.Invalid;
+                }
+
+                // move forward
+                cursor.advance(1);
+            },
+            inline else => {
+                // If we got here we've either;
+                // * Found an invalid character that's not colon (58),
+                // * Reached end of the buffer so this is likely a partial request.
+                if (key_end == cursor.end) {
+                    // No remaining bytes, though the caller can read more data and try to parse again.
+                    return error.Incomplete;
+                }
+
+                // Invalid character and not end of the buffer, so a malformed request. Can't go further.
                 return error.Invalid;
-            }
-
-            // move forward
-            cursor.advance(1);
-        } else {
-            // If we got here we've either;
-            // * Found an invalid character that's not colon (58),
-            // * Reached end of the buffer so this is likely a partial request.
-            if (key_end == cursor.end) {
-                // No remaining bytes, though the caller can read more data and try to parse again.
-                return error.Incomplete;
-            }
-
-            // Invalid character and not end of the buffer, so a malformed request. Can't go further.
-            return error.Invalid;
+            },
         }
 
         // Get rid of leading spaces if there are any.
@@ -558,6 +561,7 @@ const Cursor = struct {
             },
         }
 
+        // Header is set.
         header.* = .{
             .key = key_start[0 .. key_end - key_start],
             .value = val_start[0 .. val_end - val_start],
@@ -567,14 +571,15 @@ const Cursor = struct {
     /// Parses HTTP request headers.
     /// If the provided `Headers` length is not sufficient, it returns `error.TooManyHeaders`.
     inline fn parseHeaders(cursor: *Cursor, headers: []Header, count: *usize) ParseRequestError!void {
-        for (0.., headers) |i, *header| {
+        var i: usize = 0;
+        while (i < headers.len) : (i += 1) {
             // check if headers part has finished
             switch (cursor.char()) {
                 '\n' => {
                     cursor.advance(1);
                     // end of headers
                     count.* = i;
-                    break;
+                    return;
                 },
                 '\r' => {
                     cursor.advance(1);
@@ -590,12 +595,42 @@ const Cursor = struct {
                     cursor.advance(1);
                     // end of headers
                     count.* = i;
-                    break;
+                    return;
                 },
                 else => {},
             }
 
-            try cursor.parseHeader(header);
+            try cursor.parseHeader(&headers[i]);
+        }
+
+        // Set count to highest.
+        count.* = i;
+
+        // We have to check for ending CRLF, same as what we're doing at top.
+        switch (cursor.char()) {
+            '\n' => cursor.advance(1),
+            '\r' => {
+                cursor.advance(1);
+
+                if (cursor.current() == cursor.end) {
+                    return error.Incomplete;
+                }
+
+                if (cursor.char() != '\n') {
+                    @branchHint(.unlikely);
+                    return error.Invalid;
+                }
+
+                cursor.advance(1);
+            },
+            else => {
+                // If we got here, we either;
+                // * have too many headers and not enough space in `headers`,
+                // * or just received an invalid character.
+                //
+                // NOTE: Currently either possibilities are interpreted as `error.Invalid`, this might change in the future.
+                return error.Invalid;
+            },
         }
     }
 };
