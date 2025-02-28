@@ -30,13 +30,6 @@ const VectorInt = std.meta.Int(.unsigned, vec_size);
 /// Block size of the CPU.
 const block_size = @sizeOf(usize);
 
-// Get the size of a single chunk in comptime.
-const BlockType = switch (block_size) {
-    4 => u32,
-    8 => u64,
-    else => @compileError("unexpected block_size"),
-};
-
 /// HTTP methods
 pub const Method = enum(u8) {
     unknown,
@@ -271,18 +264,17 @@ const Cursor = struct {
         }
 
         // SWAR search
-        // It's better to stick to platform's block size rather than blindly using 64-bit integers.
         while (cursor.hasLength(block_size)) {
             // Fill the largest integer with exclamation marks.
-            const bangs = comptime uniformBlock(BlockType, '!');
+            const bangs = comptime broadcast(usize, '!');
             // Fill the largest integer with DEL.
-            const del = comptime uniformBlock(BlockType, 0x7f);
+            const del = comptime broadcast(usize, 0x7f);
             // Fill the largest integer with 1.
-            const one = comptime uniformBlock(BlockType, 0x01);
+            const one = comptime broadcast(usize, 0x01);
             // Fill the largest integer with € (128).
-            const full_128 = comptime uniformBlock(BlockType, 128);
+            const full_128 = comptime broadcast(usize, 128);
             // Load the next chunk.
-            const chunk = cursor.asInteger(BlockType);
+            const chunk = cursor.asInteger(usize);
 
             // * When a byte in `chunk` is less than `!`, subtraction will wrap around and set the high bit.
             // * The AND NOT part is to make sure only the high bits of characters less than `!` be set.
@@ -464,12 +456,12 @@ const Cursor = struct {
 
         // SWAR search
         while (cursor.hasLength(block_size)) {
-            const bangs = comptime uniformBlock(BlockType, ' ');
-            const ones = comptime uniformBlock(BlockType, 0x01);
-            const dels = comptime uniformBlock(BlockType, 0x7f);
-            const full_128 = comptime uniformBlock(BlockType, 128);
+            const bangs = comptime broadcast(usize, ' ');
+            const ones = comptime broadcast(usize, 0x01);
+            const dels = comptime broadcast(usize, 0x7f);
+            const full_128 = comptime broadcast(usize, 128);
 
-            const chunk = cursor.asInteger(BlockType);
+            const chunk = cursor.asInteger(usize);
 
             const lt = (chunk -% bangs) & ~chunk;
 
@@ -642,7 +634,7 @@ inline fn isValidValueChar(c: u8) bool {
 }
 
 /// Returns an integer filled with a given byte.
-inline fn uniformBlock(comptime T: type, byte: u8) T {
+inline fn broadcast(comptime T: type, byte: u8) T {
     comptime {
         const bits = @ctz(@as(T, 0));
         const b = @as(T, byte);
@@ -652,7 +644,7 @@ inline fn uniformBlock(comptime T: type, byte: u8) T {
             16 => b * 0x01_01,
             32 => b * 0x01_01_01_01,
             64 => b * 0x01_01_01_01_01_01_01_01,
-            else => @compileError("unexpected uniform size"),
+            else => @compileError("unexpected broadcast size"),
         };
     }
 }
