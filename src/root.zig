@@ -496,88 +496,77 @@ const Cursor = struct {
 
     /// Parses a single header.
     inline fn parseHeader(cursor: *Cursor, header: *Header) ParseRequestError!void {
-        // Parsing header key.
-        {
-            const key_start = cursor.current();
-            cursor.matchHeaderKey();
-            const key_end = cursor.current();
+        const key_start = cursor.current();
+        cursor.matchHeaderKey();
+        const key_end = cursor.current();
 
-            // Set header key.
-            header.key = blk: {
-                // Make sure the top character is a colon (58).
-                if (cursor.char() == ':') {
-                    // This means 0 length header key, which is invalid.
-                    if (key_end == key_start) {
-                        return error.Invalid;
-                    }
+        // Make sure the invalid character is a colon (58).
+        if (cursor.char() == ':') {
+            @branchHint(.likely);
 
-                    // move forward
-                    cursor.advance(1);
+            // This means 0 length header key, which is invalid.
+            if (key_end == key_start) {
+                return error.Invalid;
+            }
 
-                    // Set the header key.
-                    break :blk key_start[0 .. key_end - key_start];
+            // move forward
+            cursor.advance(1);
+        } else {
+            // If we got here we've either;
+            // * Found an invalid character that's not colon (58),
+            // * Reached end of the buffer so this is likely a partial request.
+            if (key_end == cursor.end) {
+                // No remaining bytes, though the caller can read more data and try to parse again.
+                return error.Incomplete;
+            }
+
+            // Invalid character and not end of the buffer, so a malformed request. Can't go further.
+            return error.Invalid;
+        }
+
+        // Get rid of leading spaces if there are any.
+        while (cursor.end - cursor.current() > 0 and cursor.char() == ' ') : (cursor.advance(1)) {}
+
+        // Found where header value starts.
+        const val_start = cursor.current();
+        cursor.matchHeaderValue();
+        const val_end = cursor.current();
+
+        switch (cursor.char()) {
+            // Both `\n` and `\r\n` indicate the end of value part.
+            '\n' => cursor.advance(1),
+            '\r' => {
+                cursor.advance(1);
+
+                // If there are no bytes, request is partial since we need a `\n` character too.
+                if (cursor.current() == cursor.end) {
+                    return error.Incomplete;
                 }
 
-                // If we got here we've either;
-                // * Found an invalid character that's not colon (58),
-                // * Reached end of the buffer so this is likely a partial request.
-                if (key_end == cursor.end) {
-                    // No remaining bytes, though the caller can read more data and try to parse again.
+                // Check for not `\n`.
+                if (cursor.char() != '\n') {
+                    @branchHint(.unlikely);
+                    return error.Invalid;
+                }
+
+                // move forward
+                cursor.advance(1);
+            },
+            // Any other character is invalid.
+            inline else => {
+                if (val_end == cursor.end) {
                     return error.Incomplete;
                 }
 
                 // Invalid character and not end of the buffer, so a malformed request. Can't go further.
                 return error.Invalid;
-            };
+            },
         }
 
-        // Parsing header value.
-        {
-            // Get rid of leading spaces if there are any.
-            while (cursor.end - cursor.current() > 0 and cursor.char() == ' ') : (cursor.advance(1)) {}
-
-            // Found where header value starts.
-            const val_start = cursor.current();
-            cursor.matchHeaderValue();
-            const val_end = cursor.current();
-
-            // Set header value.
-            header.value = blk: {
-                switch (cursor.char()) {
-                    // Both `\n` and `\r\n` indicate the end of value part.
-                    '\n' => cursor.advance(1),
-                    '\r' => {
-                        cursor.advance(1);
-
-                        // If there are no bytes, request is partial since we need a `\n` character too.
-                        if (cursor.current() == cursor.end) {
-                            return error.Incomplete;
-                        }
-
-                        // Check for not `\n`.
-                        if (cursor.char() != '\n') {
-                            @branchHint(.unlikely);
-                            return error.Invalid;
-                        }
-
-                        // move forward
-                        cursor.advance(1);
-                    },
-                    // Any other character is invalid.
-                    inline else => {
-                        if (val_end == cursor.end) {
-                            return error.Incomplete;
-                        }
-
-                        // Invalid character and not end of the buffer, so a malformed request. Can't go further.
-                        return error.Invalid;
-                    },
-                }
-
-                // Set the header value.
-                break :blk val_start[0 .. val_end - val_start];
-            };
-        }
+        header.* = .{
+            .key = key_start[0 .. key_end - key_start],
+            .value = val_start[0 .. val_end - val_start],
+        };
     }
 
     /// Parses HTTP request headers.
