@@ -1,0 +1,27 @@
+Benchmark 1 (4 runs): ./picohttpparser/picohttpparser
+  measurement          mean ± σ            min … max           outliers         delta
+  wall_time          1.42s  ± 12.3ms                              1.41s  … 1.44s                                     0 ( 0%)        0%
+  peak_rss           1.18MB ±    0                                1.18MB … 1.18MB                                    0 ( 0%)        0%
+  cpu_cycles         6.13G  ± 14.5M                               6.12G  … 6.16G                                     0 ( 0%)        0%
+  instructions       34.7G  ±  137                                34.7G  … 34.7G                                     0 ( 0%)        0%
+  cache_references   8.59K  ± 1.78K                               6.73K  … 10.9K                                     0 ( 0%)        0%
+  cache_misses       5.47K  ±  915                                4.51K  … 6.46K                                     0 ( 0%)        0%
+  branch_misses      9.12K  ±  980                                7.92K  … 10.3K                                     0 ( 0%)        0%
+Benchmark 2 (4 runs): ./bench-httparse/target/release/bench-httparse
+  measurement          mean ± σ            min … max           outliers         delta
+  wall_time          1.30s  ± 8.57ms                              1.29s  … 1.31s                                     0 ( 0%)        ⚡-  8.5% ±  1.3%
+  peak_rss           1.86MB ± 65.5KB                              1.83MB … 1.96MB                                    0 ( 0%)        💩+ 58.0% ±  6.8%
+  cpu_cycles         5.63G  ± 37.0M                               5.60G  … 5.68G                                     0 ( 0%)        ⚡-  8.2% ±  0.8%
+  instructions       24.8G  ±  415                                24.8G  … 24.8G                                     0 ( 0%)        ⚡- 28.4% ±  0.0%
+  cache_references   14.1K  ± 1.86K                               12.6K  … 16.7K                                     0 ( 0%)        💩+ 64.1% ± 36.7%
+  cache_misses       8.36K  ± 1.50K                               7.02K  … 10.2K                                     0 ( 0%)        💩+ 52.8% ± 39.3%
+  branch_misses      7.92K  ±  461                                7.50K  … 8.57K                                     0 ( 0%)          - 13.2% ± 14.5%
+Benchmark 3 (5 runs): ./hparse/zig-out/bin/hparse
+  measurement          mean ± σ            min … max           outliers         delta
+  wall_time          1.24s  ± 2.00ms                              1.24s  … 1.24s                                     0 ( 0%)        ⚡- 12.5% ±  0.9%
+  peak_rss            262KB ±    0                                 262KB …  262KB                                    0 ( 0%)        ⚡- 77.8% ±  0.0%
+  cpu_cycles         5.38G  ± 4.42M                               5.37G  … 5.38G                                     0 ( 0%)        ⚡- 12.3% ±  0.3%
+  instructions       8.01G  ± 11.4                                8.01G  … 8.01G                                     0 ( 0%)        ⚡- 76.9% ±  0.0%
+  cache_references   2.11K  ±  593                                1.10K  … 2.50K                                     1 (20%)        ⚡- 75.4% ± 23.1%
+  cache_misses       1.50K  ±  471                                 721   … 1.99K                                     1 (20%)        ⚡- 72.7% ± 20.2%
+  branch_misses      7.53K  ± 3.44K                               4.21K  … 13.4K                                     0 ( 0%)          - 17.4% ± 46.5%
