@@ -28,14 +28,7 @@ var headers: [32]Header = undefined;
 var header_count: usize = 0;
 
 // parse the request
-_ = try hparse.parseRequest(
-    buffer[0..],
-    &method,
-    &path,
-    &http_version,
-    &headers,
-    &header_count,
-);
+_ = try hparse.parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count);
 ```
 
 ## Installation
