@@ -747,56 +747,205 @@ pub fn parseRequest(
     return cursor.idx - cursor.start;
 }
 
-// Tests
+const testing = std.testing;
 
-test parseRequest {
-    const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost: asdjqwdkwfj\r\nConnection: keep-alive\r\n\r\n";
+/// Testing only.
+fn cursorFromBuffer(buf: []const u8) Cursor {
+    return .{ .idx = buf.ptr, .start = buf.ptr, .end = buf.ptr + buf.len };
+}
+
+test "cursor: parse method/path/version" {
+    const requests = [_][]const u8{
+        "GET / HTTP/1.1\r\n\r\n",
+        "GET / HTTP/1.1\n\n",
+        "POST / HTTP/1.1\r\n\r\n",
+        "POST / HTTP/1.1\n\n",
+        "HEAD / HTTP/1.1\r\n\r\n",
+        "HEAD / HTTP/1.1\n\n",
+        "PUT / HTTP/1.1\r\n\r\n",
+        "PUT / HTTP/1.1\n\n",
+        "DELETE / HTTP/1.1\r\n\r\n",
+        "DELETE / HTTP/1.1\n\n",
+        "CONNECT / HTTP/1.1\r\n\r\n",
+        "CONNECT / HTTP/1.1\n\n",
+        "OPTIONS / HTTP/1.1\r\n\r\n",
+        "OPTIONS / HTTP/1.1\n\n",
+        "TRACE / HTTP/1.1\r\n\r\n",
+        "TRACE / HTTP/1.1\n\n",
+        "PATCH / HTTP/1.1\r\n\r\n",
+        "PATCH / HTTP/1.1\n\n",
+    };
+
+    const check = struct {
+        fn func(req: []const u8, expected: Method) !void {
+            var cursor = Cursor{ .idx = req.ptr, .start = req.ptr, .end = req.ptr + req.len };
+
+            // test method
+            var method = Method.unknown;
+            try cursor.parseMethod(&method);
+            try testing.expectEqual(expected, method);
+
+            // test path
+            var path: ?[]const u8 = null;
+            try cursor.parsePath(&path);
+            try testing.expectEqualStrings("/", path.?);
+
+            // test version
+            var version = Version.@"1.0";
+            try cursor.parseVersion(&version);
+            try testing.expectEqual(.@"1.1", version);
+        }
+    }.func;
+
+    // GET
+    for (requests[0..2]) |req| try check(req, .get);
+    // POST
+    for (requests[2..4]) |req| try check(req, .post);
+    // HEAD
+    for (requests[4..6]) |req| try check(req, .head);
+    // PUT
+    for (requests[6..8]) |req| try check(req, .put);
+    // DELETE
+    for (requests[8..10]) |req| try check(req, .delete);
+    // CONNECT
+    for (requests[10..12]) |req| try check(req, .connect);
+    // OPTIONS
+    for (requests[12..14]) |req| try check(req, .options);
+    // TRACE
+    for (requests[14..16]) |req| try check(req, .trace);
+    // PATCH
+    for (requests[16..18]) |req| try check(req, .patch);
+}
+
+test "cursor: match path" {
+    // control characters (0..32)
+    for (0..33) |c| {
+        var buf: [47]u8 = undefined;
+        @memset(&buf, @intCast(c));
+
+        var cursor = cursorFromBuffer(&buf);
+        cursor.matchPath();
+
+        // Top character must be equal to what we currently iterate.
+        try testing.expectEqual(c, cursor.char());
+        // It should have start right at the beginning.
+        try testing.expectEqual(cursor.start, cursor.current());
+        try testing.expect(cursor.end - cursor.current() == buf.len);
+    }
+
+    // ASCII (33..126)
+    for (33..127) |c| {
+        var buf: [47]u8 = undefined;
+        @memset(&buf, @intCast(c));
+
+        var cursor = cursorFromBuffer(&buf);
+        cursor.matchPath();
+
+        // Buffer should be consumed fully.
+        try testing.expectEqual(cursor.end, cursor.current());
+        try testing.expect(cursor.end - cursor.current() == 0);
+    }
+
+    // DEL control character (127)
+    {
+        var buf: [47]u8 = undefined;
+        @memset(&buf, 0x7f);
+
+        var cursor = cursorFromBuffer(&buf);
+        cursor.matchPath();
+
+        // Top character must be equal to what we currently iterate.
+        try testing.expectEqual(0x7f, cursor.char());
+        // It should have start right at the beginning.
+        try testing.expectEqual(cursor.start, cursor.current());
+        try testing.expect(cursor.end - cursor.current() == buf.len);
+    }
+
+    // Extended ASCII (128..255)
+    for (128..256) |c| {
+        var buf: [47]u8 = undefined;
+        @memset(&buf, @intCast(c));
+
+        var cursor = cursorFromBuffer(&buf);
+        cursor.matchPath();
+
+        // Buffer should be consumed fully.
+        try testing.expectEqual(cursor.end, cursor.current());
+        try testing.expect(cursor.end - cursor.current() == 0);
+    }
+}
+
+test "parse request" {
+    const buffer: []const u8 = "OPTIONS /hey-this-is-kinda-long-path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
 
     var method: Method = .unknown;
     var path: ?[]const u8 = null;
     var http_version: Version = .@"1.0";
-    var headers: [64]Header = undefined;
+    var headers: [2]Header = undefined;
     var header_count: usize = 0;
 
-    const len = parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
-        error.Incomplete => @panic("need more bytes"),
-        error.Invalid => @panic("invalid!"),
-    };
+    const len = try parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count);
 
-    std.debug.print("{}\t{}\n", .{ method, http_version });
-    std.debug.print("path: {s}\n", .{path.?});
-
-    for (headers[0..header_count]) |header| {
-        std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
-    }
-
-    std.debug.print("len: {any}\n", .{len});
-
-    //var tokens: [256]u1 = std.mem.zeroes([256]u1);
-    //@memset(&tokens, 1);
-    //
-    //tokens[58] = 0;
-    //tokens[127] = 0;
-    //
-    //for (0..32) |i| {
-    //    tokens[i] = 0;
-    //}
-    //
-    //std.debug.print("{any}\n", .{tokens});
-
-    //const min: @Vector(8, u8) = @splat('A' - 1);
-    //const max: @Vector(8, u8) = @splat('Z');
-    //
-    //const chunk: @Vector(8, u8) = "tEsTINgG".*;
-    //
-    //const bits = @intFromBool(chunk <= max) & @intFromBool(chunk > min);
-    //var res: u8 = @bitCast(bits);
-    //
-    //while (res != 0) {
-    //    const t = res & -%res;
-    //    defer res ^= t;
-    //
-    //    const idx = @ctz(t);
-    //    std.debug.print("{c}\n", .{chunk[idx]});
-    //}
+    try testing.expect(len == buffer.len);
+    try testing.expect(method == .options);
+    try testing.expect(path != null);
+    try testing.expectEqualStrings("/hey-this-is-kinda-long-path", path.?);
+    try testing.expect(http_version == .@"1.1");
+    try testing.expect(header_count == 2);
+    try testing.expectEqualStrings("Host", headers[0].key);
+    try testing.expectEqualStrings("localhost", headers[0].value);
+    try testing.expectEqualStrings("Connection", headers[1].key);
+    try testing.expectEqualStrings("close", headers[1].value);
 }
+
+//test parseRequest {
+//const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost: asdjqwdkwfj\r\nConnection: keep-alive\r\n\r\n";
+//
+//var method: Method = .unknown;
+//var path: ?[]const u8 = null;
+//var http_version: Version = .@"1.0";
+//var headers: [3]Header = undefined;
+//var header_count: usize = 0;
+//
+//const len = parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
+//    error.Incomplete => @panic("need more bytes"),
+//    error.Invalid => @panic("invalid!"),
+//};
+//
+//std.debug.print("{}\t{}\n", .{ method, http_version });
+//std.debug.print("path: {s}\n", .{path.?});
+//
+//for (headers[0..header_count]) |header| {
+//    std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
+//}
+//
+//std.debug.print("len: {any}\n", .{len});
+
+//var tokens: [256]u1 = std.mem.zeroes([256]u1);
+//@memset(&tokens, 1);
+//
+//tokens[58] = 0;
+//tokens[127] = 0;
+//
+//for (0..32) |i| {
+//    tokens[i] = 0;
+//}
+//
+//std.debug.print("{any}\n", .{tokens});
+
+//const min: @Vector(8, u8) = @splat('A' - 1);
+//const max: @Vector(8, u8) = @splat('Z');
+//
+//const chunk: @Vector(8, u8) = "tEsTINgG".*;
+//
+//const bits = @intFromBool(chunk <= max) & @intFromBool(chunk > min);
+//var res: u8 = @bitCast(bits);
+//
+//while (res != 0) {
+//    const t = res & -%res;
+//    defer res ^= t;
+//
+//    const idx = @ctz(t);
+//    std.debug.print("{c}\n", .{chunk[idx]});
+//}
+//}
