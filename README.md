@@ -1,10 +1,6 @@
-<p align="center">
-  <img src="https://github.com/nikneym/hparse/blob/main/misc/cog.png" alt="hparse-cog" />
-</p>
-
 # hparse
 
-![GitHub License](https://img.shields.io/github/license/nikneym/hparse?color=navy)
+![GitHub License](https://img.shields.io/github/license/nikneym/hparse?color=orange)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/nikneym/hparse/test-x86_64-linux.yml?label=x86_64-linux)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/nikneym/hparse/test-x86_64-windows.yml?label=x86_64-windows)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/nikneym/hparse/test-macos.yml?label=macos)
