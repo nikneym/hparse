@@ -15,6 +15,14 @@ Fast HTTP/1.1 & HTTP/1.0 parser. Powered by Zig ⚡
 * Never allocates and never copies.
 * Similar API to picohttpparser; can be swapped in smoothly.
 
+## Benchmarks
+
+Benchmarks can be found under [`bench/`](https://github.com/nikneym/hparse/tree/main/bench) folder, they can either be run with [hyperfine](https://github.com/sharkdp/hyperfine) or [poop](https://github.com/andrewrk/poop).
+
+Here are the comparison of 3 parser libraries (hparse, httparse and picohttpparser) via hyperfine, visualized by Claude 3.7 Sonnet.
+
+<img src="https://raw.githubusercontent.com/nikneym/hparse/refs/heads/main/bench/bench.svg">
+
 ## Usage
 
 ```zig
