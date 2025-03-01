@@ -1,0 +1,26 @@
+name: test-macos
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest]
+        target: [
+          aarch64-macos,
+          x86_64-macos,
+        ]
+    runs-on: ${{ matrix.os }}
+    name: Test ${{ matrix.os }}, ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0-dev.3357+c44f4501e
+
+      - name: Run Tests
+        run: zig build test -Dtarget=${{ matrix.target }}
