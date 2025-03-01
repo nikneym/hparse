@@ -1,4 +1,10 @@
+# zig build artifacts
 .zig-cache/
 zig-out/
 
+# benchmark build artifacts
+bench/bench-httparse/target/
+bench/picohttpparser/picohttpparser
+
+# some unstable testing stuff
 src/simd
