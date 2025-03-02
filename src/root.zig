@@ -144,6 +144,11 @@ const Cursor = struct {
         return cursor.asInteger(u32) == @as(u32, @bitCast([4]u8{ c0, c1, c2, c3 }));
     }
 
+    /// Moves the cursor until no leading spaces there are.
+    inline fn skipSpaces(cursor: *Cursor) void {
+        while (cursor.end - cursor.current() > 0 and cursor.char() == ' ') : (cursor.advance(1)) {}
+    }
+
     /// Parses the method and the trailing space.
     /// SAFETY: This function doesn't check if out of bounds reachable.
     inline fn parseMethod(cursor: *Cursor, method: *Method) ParseRequestError!void {
