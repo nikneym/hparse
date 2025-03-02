@@ -752,6 +752,106 @@ pub fn parseRequest(
     return cursor.idx - cursor.start;
 }
 
+/// Minimum response len.
+///
+/// `HTTP/1.1 200 OK\n`
+const min_res_len = 0x10;
+
+const native_endian = builtin.cpu.arch.endian();
+
+/// Parses an HTTP response.
+/// * `error.Incomplete` indicates more data is needed to complete the request.
+/// * `error.Invalid` indicates request is invalid/malformed.
+pub fn parseResponse(
+    // Slice we want to parse.
+    slice: []const u8,
+    /// Parsed HTTP version will be stored here.
+    version: *Version,
+    /// Parsed status code will be stored here.
+    status_code: *u16,
+    /// Parsed status message will be stored here.
+    status_msg: *?[]const u8,
+) !void {
+    _ = status_msg;
+
+    // We need at least `min_res_len` bytes to start parsing.
+    if (slice.len < min_res_len) {
+        return error.Incomplete;
+    }
+
+    const slice_start = slice.ptr;
+    const slice_end = slice.ptr + slice.len;
+
+    var cursor = Cursor{ .idx = slice_start, .start = slice_start, .end = slice_end };
+
+    // Parse HTTP version.
+    // Request and response differ in this sense so we can't use `Cursor.parseVersion` here.
+    {
+        const chunk = cursor.asInteger(u64);
+        // advance as much as consumed
+        cursor.advance(8);
+
+        // Match the version with magic integers.
+        version.* = blk: switch (chunk) {
+            HTTP_1_0 => break :blk .@"1.0",
+            HTTP_1_1 => break :blk .@"1.1",
+            else => return error.Invalid, // Unknown/unsupported HTTP version.
+        };
+
+        // Parse the space afterwards.
+        if (cursor.char() != ' ') {
+            @branchHint(.unlikely);
+            return error.Invalid;
+        }
+
+        // Consume the space.
+        cursor.advance(1);
+    }
+
+    // Parse status code.
+    {
+        // Make sure next 3 bytes are numeric (0-9).
+        const dirty = cursor.idx[0] > 47 and cursor.idx[0] < 58 and
+            cursor.idx[1] > 47 and cursor.idx[1] < 58 and
+            cursor.idx[2] > 47 and cursor.idx[2] < 58;
+
+        if (!dirty) {
+            @branchHint(.unlikely);
+            return error.Invalid;
+        }
+
+        // Parse the status code.
+        const hundreds: u16 = @as(u16, @intCast(cursor.idx[0] - '0')) * 100;
+        const tens: u16 = @as(u16, @intCast(cursor.idx[1] - '0')) * 10;
+        const ones: u16 = @as(u16, @intCast(cursor.idx[2] - '0'));
+
+        // Set the status code.
+        status_code.* = hundreds + tens + ones;
+
+        // eat bytes
+        cursor.advance(3);
+    }
+
+    switch (cursor.char()) {
+        // Parse status message.
+        ' ' => {
+            cursor.skipSpaces();
+        },
+        '\r' => {},
+        '\n' => {},
+    }
+}
+
+test parseResponse {
+    const buffer = "HTTP/1.1 200 OK\n";
+
+    var version: Version = .@"1.0";
+    var status_code: u16 = 0;
+    var status_msg: ?[]const u8 = null;
+
+    try parseResponse(buffer[0..], &version, &status_code, &status_msg);
+}
+
 const testing = std.testing;
 
 /// Testing only.
