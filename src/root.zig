@@ -1058,7 +1058,7 @@ test "cursor: match path" {
     }
 }
 
-test "parse request" {
+test parseRequest {
     const buffer: []const u8 = "OPTIONS /hey-this-is-kinda-long-path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
 
     var method: Method = .unknown;
@@ -1081,54 +1081,25 @@ test "parse request" {
     try testing.expectEqualStrings("close", headers[1].value);
 }
 
-//test parseRequest {
-//const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost: asdjqwdkwfj\r\nConnection: keep-alive\r\n\r\n";
-//
-//var method: Method = .unknown;
-//var path: ?[]const u8 = null;
-//var http_version: Version = .@"1.0";
-//var headers: [3]Header = undefined;
-//var header_count: usize = 0;
-//
-//const len = parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
-//    error.Incomplete => @panic("need more bytes"),
-//    error.Invalid => @panic("invalid!"),
-//};
-//
-//std.debug.print("{}\t{}\n", .{ method, http_version });
-//std.debug.print("path: {s}\n", .{path.?});
-//
-//for (headers[0..header_count]) |header| {
-//    std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
-//}
-//
-//std.debug.print("len: {any}\n", .{len});
+test parseResponse {
+    const buffer = "HTTP/1.1 418 I'm a teapot\r\nHost: localhost\r\nSome-Number-Sequence: 123291429\r\n\r\n";
 
-//var tokens: [256]u1 = std.mem.zeroes([256]u1);
-//@memset(&tokens, 1);
-//
-//tokens[58] = 0;
-//tokens[127] = 0;
-//
-//for (0..32) |i| {
-//    tokens[i] = 0;
-//}
-//
-//std.debug.print("{any}\n", .{tokens});
+    var version: Version = .@"1.0";
+    var status_code: u16 = 0;
+    var status_msg: ?[]const u8 = null;
+    var headers: [2]Header = undefined;
+    var header_count: usize = 0;
 
-//const min: @Vector(8, u8) = @splat('A' - 1);
-//const max: @Vector(8, u8) = @splat('Z');
-//
-//const chunk: @Vector(8, u8) = "tEsTINgG".*;
-//
-//const bits = @intFromBool(chunk <= max) & @intFromBool(chunk > min);
-//var res: u8 = @bitCast(bits);
-//
-//while (res != 0) {
-//    const t = res & -%res;
-//    defer res ^= t;
-//
-//    const idx = @ctz(t);
-//    std.debug.print("{c}\n", .{chunk[idx]});
-//}
-//}
+    const len = try parseResponse(buffer[0..], &version, &status_code, &status_msg, &headers, &header_count);
+
+    try testing.expect(buffer.len == len);
+    try testing.expect(version == .@"1.1");
+    try testing.expect(status_code == 418);
+    try testing.expect(status_msg != null);
+    try testing.expectEqualStrings("I'm a teapot", status_msg.?);
+    try testing.expect(header_count == 2);
+    try testing.expectEqualStrings("Host", headers[0].key);
+    try testing.expectEqualStrings("localhost", headers[0].value);
+    try testing.expectEqualStrings("Some-Number-Sequence", headers[1].key);
+    try testing.expectEqualStrings("123291429", headers[1].value);
+}
