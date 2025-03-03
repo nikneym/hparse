@@ -144,6 +144,11 @@ const Cursor = struct {
         return cursor.asInteger(u32) == @as(u32, @bitCast([4]u8{ c0, c1, c2, c3 }));
     }
 
+    /// Moves the cursor until no leading spaces there are.
+    inline fn skipSpaces(cursor: *Cursor) void {
+        while (cursor.end - cursor.current() > 0 and cursor.char() == ' ') : (cursor.advance(1)) {}
+    }
+
     /// Parses the method and the trailing space.
     /// SAFETY: This function doesn't check if out of bounds reachable.
     inline fn parseMethod(cursor: *Cursor, method: *Method) ParseRequestError!void {
@@ -384,7 +389,7 @@ const Cursor = struct {
                     return error.Invalid;
                 }
             },
-            inline else => return error.Invalid, // unroll
+            else => return error.Invalid, // unroll
         }
     }
 
@@ -508,7 +513,7 @@ const Cursor = struct {
                 // move forward
                 cursor.advance(1);
             },
-            inline else => {
+            else => {
                 // If we got here we've either;
                 // * Found an invalid character that's not colon (58),
                 // * Reached end of the buffer so this is likely a partial request.
@@ -551,7 +556,7 @@ const Cursor = struct {
                 cursor.advance(1);
             },
             // Any other character is invalid.
-            inline else => {
+            else => {
                 if (val_end == cursor.end) {
                     return error.Incomplete;
                 }
@@ -633,6 +638,57 @@ const Cursor = struct {
             },
         }
     }
+
+    /// Matches status message for valid characters.
+    inline fn matchStatusMessage(cursor: *Cursor) void {
+        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
+            if (!isValidStatusMsgChar(cursor.char())) {
+                return;
+            }
+        }
+    }
+
+    /// Parses the status message in HTTP responses.
+    inline fn parseStatusMessage(cursor: *Cursor, status_msg: *?[]const u8) ParseRequestError!void {
+        const msg_start = cursor.current();
+        cursor.matchStatusMessage();
+        const msg_end = cursor.current();
+
+        // The character that cause `matchStatusMessage` must be either `\r` or `\n`.
+        switch (cursor.char()) {
+            '\n' => {
+                // done
+                cursor.advance(1);
+            },
+            '\r' => {
+                cursor.advance(1);
+
+                // If we've reached the end, return `error.Incomplete`.
+                if (cursor.current() == cursor.end) {
+                    return error.Incomplete;
+                }
+
+                // We expect `\n` after.
+                if (cursor.char() != '\n') {
+                    @branchHint(.unlikely);
+                    return error.Invalid;
+                }
+
+                // done
+                cursor.advance(1);
+            },
+            else => {
+                if (msg_end == cursor.end) {
+                    return error.Incomplete;
+                }
+
+                return error.Invalid;
+            },
+        }
+
+        // set the status message
+        status_msg.* = msg_start[0 .. msg_end - msg_start];
+    }
 };
 
 /// Table of valid path characters.
@@ -669,6 +725,18 @@ const value_map = createCharMap(.{
 /// Checks if a given character is a valid header value character.
 inline fn isValidValueChar(c: u8) bool {
     return value_map[c] != 0;
+}
+
+/// Table of valid status message characters.
+const status_msg_map = createCharMap(.{
+    // Invalid characters.
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 127,
+});
+
+/// Checks if a given character is a valid statuss message character.
+inline fn isValidStatusMsgChar(c: u8) bool {
+    return status_msg_map[c] != 0;
 }
 
 /// Returns an integer filled with a given byte.
@@ -717,7 +785,7 @@ pub fn parseRequest(
     version: *Version,
     /// Parsed headers will be stored here.
     headers: []Header,
-    /// When the function returns, count of parsed headers will be set here.
+    /// Count of parsed headers will be set here.
     header_count: *usize,
 ) ParseRequestError!usize {
     // We expect at least 15 bytes to start processing.
@@ -744,7 +812,122 @@ pub fn parseRequest(
     try cursor.parseHeaders(headers, header_count);
 
     // Return the total consumed length to caller.
-    return cursor.idx - cursor.start;
+    return cursor.current() - cursor.start;
+}
+
+/// Minimum response len.
+///
+/// `HTTP/1.1 200\n`
+/// Status message (OK) is optional.
+const min_res_len = 13;
+
+/// Parses an HTTP response.
+/// * `error.Incomplete` indicates more data is needed to complete the request.
+/// * `error.Invalid` indicates request is invalid/malformed.
+pub fn parseResponse(
+    // Slice we want to parse.
+    slice: []const u8,
+    /// Parsed HTTP version will be stored here.
+    version: *Version,
+    /// Parsed status code will be stored here.
+    status_code: *u16,
+    /// Parsed status message will be stored here.
+    status_msg: *?[]const u8,
+    /// Parsed headers will be stored here.
+    headers: []Header,
+    /// Count of parsed headers will be set here.
+    header_count: *usize,
+) !usize {
+    // We need at least `min_res_len` bytes to start parsing.
+    if (slice.len < min_res_len) {
+        return error.Incomplete;
+    }
+
+    const slice_start = slice.ptr;
+    const slice_end = slice.ptr + slice.len;
+
+    var cursor = Cursor{ .idx = slice_start, .start = slice_start, .end = slice_end };
+
+    // Parse HTTP version.
+    // Request and response differ in this sense so we can't use `Cursor.parseVersion` here.
+    {
+        const chunk = cursor.asInteger(u64);
+        // advance as much as consumed
+        cursor.advance(8);
+
+        // Match the version with magic integers.
+        version.* = blk: switch (chunk) {
+            HTTP_1_0 => break :blk .@"1.0",
+            HTTP_1_1 => break :blk .@"1.1",
+            else => return error.Invalid, // Unknown/unsupported HTTP version.
+        };
+
+        // Parse the space afterwards.
+        if (cursor.char() != ' ') {
+            @branchHint(.unlikely);
+            return error.Invalid;
+        }
+
+        // Consume the space.
+        cursor.advance(1);
+    }
+
+    // Parse status code.
+    {
+        // Make sure next 3 bytes are numeric (0-9).
+        const dirty = cursor.idx[0] > 47 and cursor.idx[0] < 58 and
+            cursor.idx[1] > 47 and cursor.idx[1] < 58 and
+            cursor.idx[2] > 47 and cursor.idx[2] < 58;
+
+        if (!dirty) {
+            @branchHint(.unlikely);
+            return error.Invalid;
+        }
+
+        // Parse the status code.
+        const hundreds: u16 = @as(u16, @intCast(cursor.idx[0] - '0')) * 100;
+        const tens: u16 = @as(u16, @intCast(cursor.idx[1] - '0')) * 10;
+        const ones: u16 = @as(u16, @intCast(cursor.idx[2] - '0'));
+
+        // Set the status code.
+        status_code.* = hundreds + tens + ones;
+
+        // eat bytes
+        cursor.advance(3);
+    }
+
+    // Parse status message if exists, otherwise, parse CRLF and continue.
+    switch (cursor.char()) {
+        ' ' => {
+            // Skip spaces if there are more.
+            cursor.skipSpaces();
+            // Get status message after.
+            try cursor.parseStatusMessage(status_msg);
+        },
+        // If we got CRLF, it means we won't get a status message.
+        '\n' => cursor.advance(1),
+        '\r' => {
+            cursor.advance(1);
+
+            if (cursor.current() == cursor.end) {
+                return error.Incomplete;
+            }
+
+            if (cursor.char() != '\n') {
+                @branchHint(.unlikely);
+                return error.Invalid;
+            }
+
+            cursor.advance(1);
+        },
+        else => return error.Invalid,
+    }
+
+    // Parse headers.
+    try cursor.parseHeaders(headers, header_count);
+
+    // Return the total consumed length to caller.
+    return cursor.current() - cursor.start;
 }
 
 const testing = std.testing;
@@ -875,7 +1058,7 @@ test "cursor: match path" {
     }
 }
 
-test "parse request" {
+test parseRequest {
     const buffer: []const u8 = "OPTIONS /hey-this-is-kinda-long-path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
 
     var method: Method = .unknown;
@@ -898,54 +1081,25 @@ test "parse request" {
     try testing.expectEqualStrings("close", headers[1].value);
 }
 
-//test parseRequest {
-//const buffer: []const u8 = "TRACE /cookies HTTP/1.1\r\nHost: asdjqwdkwfj\r\nConnection: keep-alive\r\n\r\n";
-//
-//var method: Method = .unknown;
-//var path: ?[]const u8 = null;
-//var http_version: Version = .@"1.0";
-//var headers: [3]Header = undefined;
-//var header_count: usize = 0;
-//
-//const len = parseRequest(buffer[0..], &method, &path, &http_version, &headers, &header_count) catch |err| switch (err) {
-//    error.Incomplete => @panic("need more bytes"),
-//    error.Invalid => @panic("invalid!"),
-//};
-//
-//std.debug.print("{}\t{}\n", .{ method, http_version });
-//std.debug.print("path: {s}\n", .{path.?});
-//
-//for (headers[0..header_count]) |header| {
-//    std.debug.print("{s}\t{s}\n", .{ header.key, header.value });
-//}
-//
-//std.debug.print("len: {any}\n", .{len});
+test parseResponse {
+    const buffer = "HTTP/1.1 418 I'm a teapot\r\nHost: localhost\r\nSome-Number-Sequence: 123291429\r\n\r\n";
 
-//var tokens: [256]u1 = std.mem.zeroes([256]u1);
-//@memset(&tokens, 1);
-//
-//tokens[58] = 0;
-//tokens[127] = 0;
-//
-//for (0..32) |i| {
-//    tokens[i] = 0;
-//}
-//
-//std.debug.print("{any}\n", .{tokens});
+    var version: Version = .@"1.0";
+    var status_code: u16 = 0;
+    var status_msg: ?[]const u8 = null;
+    var headers: [2]Header = undefined;
+    var header_count: usize = 0;
 
-//const min: @Vector(8, u8) = @splat('A' - 1);
-//const max: @Vector(8, u8) = @splat('Z');
-//
-//const chunk: @Vector(8, u8) = "tEsTINgG".*;
-//
-//const bits = @intFromBool(chunk <= max) & @intFromBool(chunk > min);
-//var res: u8 = @bitCast(bits);
-//
-//while (res != 0) {
-//    const t = res & -%res;
-//    defer res ^= t;
-//
-//    const idx = @ctz(t);
-//    std.debug.print("{c}\n", .{chunk[idx]});
-//}
-//}
+    const len = try parseResponse(buffer[0..], &version, &status_code, &status_msg, &headers, &header_count);
+
+    try testing.expect(buffer.len == len);
+    try testing.expect(version == .@"1.1");
+    try testing.expect(status_code == 418);
+    try testing.expect(status_msg != null);
+    try testing.expectEqualStrings("I'm a teapot", status_msg.?);
+    try testing.expect(header_count == 2);
+    try testing.expectEqualStrings("Host", headers[0].key);
+    try testing.expectEqualStrings("localhost", headers[0].value);
+    try testing.expectEqualStrings("Some-Number-Sequence", headers[1].key);
+    try testing.expectEqualStrings("123291429", headers[1].value);
+}
