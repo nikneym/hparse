@@ -389,7 +389,7 @@ const Cursor = struct {
                     return error.Invalid;
                 }
             },
-            inline else => return error.Invalid, // unroll
+            else => return error.Invalid, // unroll
         }
     }
 
@@ -513,7 +513,7 @@ const Cursor = struct {
                 // move forward
                 cursor.advance(1);
             },
-            inline else => {
+            else => {
                 // If we got here we've either;
                 // * Found an invalid character that's not colon (58),
                 // * Reached end of the buffer so this is likely a partial request.
@@ -556,7 +556,7 @@ const Cursor = struct {
                 cursor.advance(1);
             },
             // Any other character is invalid.
-            inline else => {
+            else => {
                 if (val_end == cursor.end) {
                     return error.Incomplete;
                 }
