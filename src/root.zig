@@ -638,6 +638,57 @@ const Cursor = struct {
             },
         }
     }
+
+    /// Matches status message for valid characters.
+    inline fn matchStatusMessage(cursor: *Cursor) void {
+        while (cursor.end - cursor.idx > 0) : (cursor.advance(1)) {
+            if (!isValidStatusMsgChar(cursor.char())) {
+                return;
+            }
+        }
+    }
+
+    /// Parses the status message in HTTP responses.
+    inline fn parseStatusMessage(cursor: *Cursor, status_msg: *?[]const u8) ParseRequestError!void {
+        const msg_start = cursor.current();
+        cursor.matchStatusMessage();
+        const msg_end = cursor.current();
+
+        // The character that cause `matchStatusMessage` must be either `\r` or `\n`.
+        switch (cursor.char()) {
+            '\n' => {
+                // done
+                cursor.advance(1);
+            },
+            '\r' => {
+                cursor.advance(1);
+
+                // If we've reached the end, return `error.Incomplete`.
+                if (cursor.current() == cursor.end) {
+                    return error.Incomplete;
+                }
+
+                // We expect `\n` after.
+                if (cursor.char() != '\n') {
+                    @branchHint(.unlikely);
+                    return error.Invalid;
+                }
+
+                // done
+                cursor.advance(1);
+            },
+            else => {
+                if (msg_end == cursor.end) {
+                    return error.Incomplete;
+                }
+
+                return error.Invalid;
+            },
+        }
+
+        // set the status message
+        status_msg.* = msg_start[0 .. msg_end - msg_start];
+    }
 };
 
 /// Table of valid path characters.
@@ -674,6 +725,18 @@ const value_map = createCharMap(.{
 /// Checks if a given character is a valid header value character.
 inline fn isValidValueChar(c: u8) bool {
     return value_map[c] != 0;
+}
+
+/// Table of valid status message characters.
+const status_msg_map = createCharMap(.{
+    // Invalid characters.
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,  16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 127,
+});
+
+/// Checks if a given character is a valid statuss message character.
+inline fn isValidStatusMsgChar(c: u8) bool {
+    return status_msg_map[c] != 0;
 }
 
 /// Returns an integer filled with a given byte.
@@ -722,7 +785,7 @@ pub fn parseRequest(
     version: *Version,
     /// Parsed headers will be stored here.
     headers: []Header,
-    /// When the function returns, count of parsed headers will be set here.
+    /// Count of parsed headers will be set here.
     header_count: *usize,
 ) ParseRequestError!usize {
     // We expect at least 15 bytes to start processing.
@@ -749,15 +812,14 @@ pub fn parseRequest(
     try cursor.parseHeaders(headers, header_count);
 
     // Return the total consumed length to caller.
-    return cursor.idx - cursor.start;
+    return cursor.current() - cursor.start;
 }
 
 /// Minimum response len.
 ///
-/// `HTTP/1.1 200 OK\n`
-const min_res_len = 0x10;
-
-const native_endian = builtin.cpu.arch.endian();
+/// `HTTP/1.1 200\n`
+/// Status message (OK) is optional.
+const min_res_len = 13;
 
 /// Parses an HTTP response.
 /// * `error.Incomplete` indicates more data is needed to complete the request.
@@ -771,9 +833,11 @@ pub fn parseResponse(
     status_code: *u16,
     /// Parsed status message will be stored here.
     status_msg: *?[]const u8,
-) !void {
-    _ = status_msg;
-
+    /// Parsed headers will be stored here.
+    headers: []Header,
+    /// Count of parsed headers will be set here.
+    header_count: *usize,
+) !usize {
     // We need at least `min_res_len` bytes to start parsing.
     if (slice.len < min_res_len) {
         return error.Incomplete;
@@ -832,24 +896,38 @@ pub fn parseResponse(
         cursor.advance(3);
     }
 
+    // Parse status message if exists, otherwise, parse CRLF and continue.
     switch (cursor.char()) {
-        // Parse status message.
         ' ' => {
+            // Skip spaces if there are more.
             cursor.skipSpaces();
+            // Get status message after.
+            try cursor.parseStatusMessage(status_msg);
         },
-        '\r' => {},
-        '\n' => {},
+        // If we got CRLF, it means we won't get a status message.
+        '\n' => cursor.advance(1),
+        '\r' => {
+            cursor.advance(1);
+
+            if (cursor.current() == cursor.end) {
+                return error.Incomplete;
+            }
+
+            if (cursor.char() != '\n') {
+                @branchHint(.unlikely);
+                return error.Invalid;
+            }
+
+            cursor.advance(1);
+        },
+        else => return error.Invalid,
     }
-}
 
-test parseResponse {
-    const buffer = "HTTP/1.1 200 OK\n";
+    // Parse headers.
+    try cursor.parseHeaders(headers, header_count);
 
-    var version: Version = .@"1.0";
-    var status_code: u16 = 0;
-    var status_msg: ?[]const u8 = null;
-
-    try parseResponse(buffer[0..], &version, &status_code, &status_msg);
+    // Return the total consumed length to caller.
+    return cursor.current() - cursor.start;
 }
 
 const testing = std.testing;
