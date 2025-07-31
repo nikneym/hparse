@@ -21,7 +21,7 @@ Benchmarks can be found under [`bench/`](https://github.com/nikneym/hparse/tree/
 
 Here are the comparison of 3 parser libraries (hparse, httparse and picohttpparser) via hyperfine, visualized by Claude 3.7 Sonnet.
 
-<img src="https://raw.githubusercontent.com/nikneym/hparse/refs/heads/main/bench/bench.svg">
+<img src="https://raw.githubusercontent.com/nikneym/hparse/9e1db7a0d809480d5080447cc3f087068cfde3ae/bench/bench.svg">
 
 ## Usage
 
