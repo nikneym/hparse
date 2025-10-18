@@ -25,10 +25,7 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
-        .hparse = .{
-            .url = "https://github.com/nikneym/hparse/archive/0bbc197af29866d230c6f2d73454aef398d4d796.tar.gz",
-            .hash = "1220fa7c037e154bb8880ffa686a0d26e71d1bad603eed09a3c70f534085557ada1d",
-        },
+        .hparse = .{ .path = "../.." },
     },
     .paths = .{
         "build.zig",
