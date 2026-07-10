@@ -500,6 +500,8 @@ const Cursor = struct {
         cursor.matchHeaderKey();
         const key_end = cursor.current();
 
+        if (cursor.current() == cursor.end) return error.Incomplete;
+
         // Make sure the invalid character is a colon (58).
         switch (cursor.char()) {
             ':' => {
@@ -535,6 +537,7 @@ const Cursor = struct {
         cursor.matchHeaderValue();
         const val_end = cursor.current();
 
+        if (cursor.current() == cursor.end) return error.Incomplete;
         switch (cursor.char()) {
             // Both `\n` and `\r\n` indicate the end of value part.
             '\n' => cursor.advance(1),
@@ -579,6 +582,7 @@ const Cursor = struct {
         var i: usize = 0;
         while (i < headers.len) : (i += 1) {
             // check if headers part has finished
+            if (cursor.current() == cursor.end) return error.Incomplete;
             switch (cursor.char()) {
                 '\n' => {
                     cursor.advance(1);
@@ -612,6 +616,7 @@ const Cursor = struct {
         count.* = i;
 
         // We have to check for ending CRLF, same as what we're doing at top.
+        if (cursor.current() == cursor.end) return error.Incomplete;
         switch (cursor.char()) {
             '\n' => cursor.advance(1),
             '\r' => {
